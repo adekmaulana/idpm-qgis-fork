@@ -15,10 +15,11 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QMessageBox,
 )
-from PyQt5.QtGui import QFont, QPixmap, QMouseEvent
-from PyQt5.QtCore import Qt, QSize, QUrl, QSettings, QByteArray, QPoint
+from PyQt5.QtGui import QFont, QPixmap, QMouseEvent, QFontDatabase
+from PyQt5.QtCore import Qt, QSize, QUrl, QSettings, QByteArray, QPoint, QTimer
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from qgis.gui import QgisInterface
+from qgis.core import Qgis, QgsMessageLog
 
 from ..config import Config
 
@@ -290,21 +291,32 @@ class LoginWidget(QDialog):
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(20, 10, 20, 20)
 
-        # --- Window controls (minimize, close) ---
+        # --- Window controls (minimize, maximize, close) ---
         controls_layout = QHBoxLayout()
         controls_layout.addStretch()
 
-        # Only show minimize button on non-macOS platforms
+        button_size = QSize(32, 32)
+
         if sys.platform != "darwin":
-            self.minimize_button = QPushButton("—")  # Em-dash for minimize icon
+            self.minimize_button = QPushButton("—")
             self.minimize_button.setObjectName("minimizeButton")
+            self.minimize_button.setFixedSize(button_size)
             self.minimize_button.setCursor(Qt.PointingHandCursor)
             self.minimize_button.setToolTip("Minimize")
             self.minimize_button.clicked.connect(self.showMinimized)
             controls_layout.addWidget(self.minimize_button)
 
-        self.close_button = QPushButton("×")  # Multiplication sign for close icon
+        self.maximize_button = QPushButton("☐")
+        self.maximize_button.setObjectName("maximizeButton")
+        self.maximize_button.setFixedSize(button_size)
+        self.maximize_button.setCursor(Qt.PointingHandCursor)
+        self.maximize_button.setToolTip("Maximize")
+        self.maximize_button.clicked.connect(self.toggle_maximize)
+        controls_layout.addWidget(self.maximize_button)
+
+        self.close_button = QPushButton("×")
         self.close_button.setObjectName("closeButton")
+        self.close_button.setFixedSize(button_size)
         self.close_button.setCursor(Qt.PointingHandCursor)
         self.close_button.setToolTip("Close")
         self.close_button.clicked.connect(self.reject)
@@ -403,19 +415,20 @@ class LoginWidget(QDialog):
             #headerLabel, #subHeaderLabel {{ color: white; }}
             #subHeaderLabel {{ color: #D0D0D0; }}
             
-            #minimizeButton, #closeButton {{
+            #minimizeButton, #maximizeButton, #closeButton {{
                 background-color: transparent; color: white; border: none;
-                font-family: "Montserrat", sans-serif;
-                font-weight: bold; padding: 2px 8px; margin: 0;
-            }}
-            #minimizeButton {{ font-size: 20px; }}
-            #closeButton {{ font-size: 28px; }}
-
-            #minimizeButton:hover, #closeButton:hover {{
-                background-color: rgba(255, 255, 255, 0.2);
+                font-family: "Arial", sans-serif;
+                font-weight: bold;
                 border-radius: 4px;
             }}
-            #minimizeButton:pressed, #closeButton:pressed {{ 
+            #minimizeButton {{ font-size: 16px; padding-bottom: 5px; }}
+            #maximizeButton {{ font-size: 16px; padding-top: 1px; }}
+            #closeButton {{ font-size: 24px; padding-bottom: 2px; }}
+
+            #minimizeButton:hover, #maximizeButton:hover, #closeButton:hover {{
+                background-color: rgba(255, 255, 255, 0.2);
+            }}
+            #minimizeButton:pressed, #maximizeButton:pressed, #closeButton:pressed {{ 
                 background-color: rgba(255, 255, 255, 0.1); 
             }}
             
@@ -457,17 +470,39 @@ class LoginWidget(QDialog):
         """
         self.setStyleSheet(qss)
 
+    def toggle_maximize(self) -> None:
+        """Toggles the window between maximized and normal states."""
+        if self.isMaximized():
+            self.showNormal()
+            self.maximize_button.setText("☐")
+            self.maximize_button.setToolTip("Maximize")
+        else:
+            self.showMaximized()
+            self.maximize_button.setText("❐")
+            self.maximize_button.setToolTip("Restore Down")
+
     # --- Methods for dragging and resizing the frameless window ---
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.LeftButton:
+            if self.isMaximized():
+                # Allow dragging from maximized state by restoring first
+                self.toggle_maximize()
+                # Use a QTimer to start the drag after the restore event is processed
+                QTimer.singleShot(0, lambda: self.start_drag(event.globalPos()))
+                return
+
             self.resizing = self._is_on_edge(event.pos())
             if self.resizing:
                 self.old_pos = event.globalPos()
             else:
-                child = self.childAt(event.pos())
-                if not isinstance(child, (QLineEdit, QPushButton)):
-                    self.old_pos = event.globalPos()
+                self.start_drag(event.globalPos())
+
+    def start_drag(self, global_pos: QPoint) -> None:
+        """Helper to safely start a drag operation."""
+        child = self.childAt(self.mapFromGlobal(global_pos))
+        if not isinstance(child, (QLineEdit, QPushButton)):
+            self.old_pos = global_pos
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.LeftButton:
@@ -477,7 +512,8 @@ class LoginWidget(QDialog):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if not self.resizing and self.old_pos is None:
-            self._update_cursor(event.pos())
+            if not self.isMaximized():  # Disable resize cursor when maximized
+                self._update_cursor(event.pos())
 
         if self.resizing:
             delta = QPoint(event.globalPos() - self.old_pos)
@@ -490,6 +526,8 @@ class LoginWidget(QDialog):
 
     def _is_on_edge(self, pos: QPoint) -> bool:
         """Check if the mouse is on the edge of the window."""
+        if self.isMaximized():
+            return False
         grip = self.resize_grip_size
         return (
             pos.x() < grip
@@ -500,6 +538,10 @@ class LoginWidget(QDialog):
 
     def _update_cursor(self, pos: QPoint) -> None:
         """Update cursor shape when hovering over window edges."""
+        if self.isMaximized():
+            self.unsetCursor()
+            return
+
         grip = self.resize_grip_size
         on_left = pos.x() < grip
         on_right = pos.x() > self.width() - grip
@@ -519,6 +561,9 @@ class LoginWidget(QDialog):
 
     def _resize_window(self, delta: QPoint) -> None:
         """Resize the window based on mouse drag."""
+        if self.isMaximized():
+            return
+
         rect = self.geometry()
         pos = self.mapFromGlobal(self.old_pos)
         grip = self.resize_grip_size
