@@ -1,4 +1,5 @@
 from typing import Optional
+import sys
 import os
 import json
 from PyQt5.QtWidgets import (
@@ -293,12 +294,14 @@ class LoginWidget(QDialog):
         controls_layout = QHBoxLayout()
         controls_layout.addStretch()
 
-        self.minimize_button = QPushButton("—")  # Em-dash for minimize icon
-        self.minimize_button.setObjectName("minimizeButton")
-        self.minimize_button.setCursor(Qt.PointingHandCursor)
-        self.minimize_button.setToolTip("Minimize")
-        self.minimize_button.clicked.connect(self.showMinimized)
-        controls_layout.addWidget(self.minimize_button)
+        # Only show minimize button on non-macOS platforms
+        if sys.platform != "darwin":
+            self.minimize_button = QPushButton("—")  # Em-dash for minimize icon
+            self.minimize_button.setObjectName("minimizeButton")
+            self.minimize_button.setCursor(Qt.PointingHandCursor)
+            self.minimize_button.setToolTip("Minimize")
+            self.minimize_button.clicked.connect(self.showMinimized)
+            controls_layout.addWidget(self.minimize_button)
 
         self.close_button = QPushButton("×")  # Multiplication sign for close icon
         self.close_button.setObjectName("closeButton")
@@ -473,14 +476,14 @@ class LoginWidget(QDialog):
             self.unsetCursor()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if not self.resizing and not self.old_pos:
+        if not self.resizing and self.old_pos is None:
             self._update_cursor(event.pos())
 
         if self.resizing:
             delta = QPoint(event.globalPos() - self.old_pos)
             self._resize_window(delta)
             self.old_pos = event.globalPos()
-        elif self.old_pos:
+        elif self.old_pos is not None:
             delta = QPoint(event.globalPos() - self.old_pos)
             self.move(self.x() + delta.x(), self.y() + delta.y())
             self.old_pos = event.globalPos()

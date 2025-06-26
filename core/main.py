@@ -1,5 +1,7 @@
 import json
+import os
 from PyQt5.QtCore import QUrl, QSettings, QTimer  # Import QTimer
+from PyQt5.QtGui import QFontDatabase
 from PyQt5.QtNetwork import QNetworkRequest, QNetworkAccessManager
 from PyQt5.QtWidgets import QAction, QMessageBox, QDialog
 from qgis.core import Qgis, QgsMessageLog
@@ -31,6 +33,8 @@ class IDPMPlugin:
         self._form_token_manager = None
         self._form_token_request_active = False
         self.login_dialog_instance = None
+
+        self.load_custom_fonts()
 
     def initGui(self) -> None:
         self.action = QAction("IDPM", self.iface.mainWindow())
@@ -219,3 +223,47 @@ class IDPMPlugin:
         if self.login_dialog_instance:
             self.login_dialog_instance.deleteLater()
             self.login_dialog_instance = None
+
+    def load_custom_fonts(self) -> None:
+        """Loads custom fonts from the assets folder."""
+        fonts_dir = os.path.join(Config.ASSETS_PATH, "fonts")
+        # Define the specific subdirectory for the fonts
+        montserrat_dir = os.path.join(fonts_dir, "montserrat")
+
+        if not os.path.exists(montserrat_dir):
+            QgsMessageLog.logMessage(
+                f"Montserrat font directory not found: {montserrat_dir}",
+                "IDPMPlugin",
+                Qgis.Warning,
+            )
+            return
+
+        try:
+            font_files = os.listdir(montserrat_dir)
+        except FileNotFoundError:
+            QgsMessageLog.logMessage(
+                f"Could not list files in directory: {montserrat_dir}",
+                "IDPMPlugin",
+                Qgis.Warning,
+            )
+            return
+
+        for font_file in font_files:
+            # Construct the full, correct path to the font file inside the subdirectory
+            font_path = os.path.join(montserrat_dir, font_file)
+
+            # Only process files with a .ttf extension
+            if font_file.lower().endswith(".ttf"):
+                font_id = QFontDatabase.addApplicationFont(font_path)
+                if font_id == -1:
+                    QgsMessageLog.logMessage(
+                        f"Failed to load font: {font_path}", "IDPMPlugin", Qgis.Warning
+                    )
+                else:
+                    font_families = QFontDatabase.applicationFontFamilies(font_id)
+                    if font_families:
+                        QgsMessageLog.logMessage(
+                            f"Successfully loaded font: {font_families[0]}",
+                            "IDPMPlugin",
+                            Qgis.Info,
+                        )
