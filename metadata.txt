@@ -1,0 +1,9 @@
+[general]
+name=IDPM QGIS Plugin
+description=KLHK IDPM QGIS Plugin
+about=
+version=1.0
+qgisMinimumVersion=3.0
+author=Adek Maulana
+email=adekzmaulana@gmail.com
+repository=https://gitlab.floothink.com/naghayasha-rahardja/m4cr-klhk/qgis-plugins
