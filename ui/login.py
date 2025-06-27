@@ -126,6 +126,7 @@ class LoginWidget(BaseDialog):
 
         try:
             response_json = json.loads(response_data.data().decode("utf-8"))
+            print(f"Login response: {response_json}")  # Debug log
             if not response_json.get("status"):
                 error_msg = response_json.get(
                     "msg", "Invalid credentials or unknown error."

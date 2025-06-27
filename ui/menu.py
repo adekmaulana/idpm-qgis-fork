@@ -122,6 +122,7 @@ class MenuWidget(BaseDialog):
         self.network_manager = QNetworkAccessManager(self)
 
         self.image_list_dialog = None
+        self.profile_dialog = None
         self.user_profile = {}  # To store loaded profile data
 
         # Define path for the new background
@@ -265,10 +266,19 @@ class MenuWidget(BaseDialog):
             )
 
     def open_profile_dialog(self):
-        """Placeholder for showing the user's profile."""
-        QMessageBox.information(
-            self, "Profile", "This will show the user profile details."
-        )
+        """
+        Hides the menu and shows the profile dialog. When the profile
+        dialog is closed, the menu is shown again.
+        """
+        from .profile import ProfileDialog  # Import here to avoid circular dependencies
+
+        if self.profile_dialog is None:
+            self.profile_dialog = ProfileDialog(self.iface, self)
+
+        self.hide()  # Hide the menu
+        # The .exec_() call will block until the profile dialog is closed
+        result = self.profile_dialog.exec_()
+        self.show()  # Show the menu again after the profile dialog is closed
 
     def handle_logout(self):
         """Handles user logout."""
