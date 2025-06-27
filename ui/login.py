@@ -1,7 +1,9 @@
 from typing import Optional
+import sys
 import os
 import json
 from PyQt5.QtWidgets import (
+    QApplication,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -16,6 +18,7 @@ from PyQt5.QtGui import QFont, QPixmap
 from PyQt5.QtCore import Qt, QSize, QUrl, QSettings, QByteArray
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from qgis.gui import QgisInterface
+from qgis.core import Qgis, QgsMessageLog
 
 from ..config import Config
 from .base_dialog import BaseDialog
@@ -130,9 +133,28 @@ class LoginWidget(BaseDialog):
                 QMessageBox.warning(self, "Login Failed", error_msg)
             else:
                 api_token = response_json.get("token")
+                user_profile = response_json.get("profile")  # <<< ADD: Get profile data
+
                 if api_token:
                     settings = QSettings()
                     settings.setValue("IDPMPlugin/token", api_token)
+
+                    # --- ADD: Save user profile ---
+                    if user_profile and isinstance(user_profile, dict):
+                        settings.setValue(
+                            "IDPMPlugin/user_profile", json.dumps(user_profile)
+                        )
+                        QgsMessageLog.logMessage(
+                            "User profile saved.", "IDPMPlugin", Qgis.Info
+                        )
+                    else:
+                        # Ensure old profile is cleared if none is provided
+                        settings.remove("IDPMPlugin/user_profile")
+                        QgsMessageLog.logMessage(
+                            "No user profile in response.", "IDPMPlugin", Qgis.Warning
+                        )
+                    # --- END ADD ---
+
                     QMessageBox.information(self, "Success", "Login successful!")
                     self.accept()
                 else:

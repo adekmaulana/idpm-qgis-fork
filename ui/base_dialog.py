@@ -6,11 +6,11 @@ from PyQt5.QtGui import QMouseEvent, QFont
 from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
-    QLineEdit,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QPushButton,
+    QLineEdit,
 )
 
 
@@ -107,6 +107,10 @@ class BaseDialog(QDialog):
     # --- Methods for dragging and resizing the frameless window ---
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        # <<< FIX: Only process mouse events if this is the active window >>>
+        if not self.isActiveWindow():
+            return
+
         if event.button() == Qt.LeftButton:
             if self.isMaximized():
                 self.toggle_maximize()

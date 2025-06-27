@@ -1,22 +1,19 @@
 import json
 import os
-from PyQt5.QtCore import QUrl, QSettings, QTimer  # Import QTimer
-from PyQt5.QtGui import QFontDatabase
+from PyQt5.QtCore import QUrl, QSettings, QTimer
 from PyQt5.QtNetwork import QNetworkRequest, QNetworkAccessManager
 from PyQt5.QtWidgets import QAction, QMessageBox, QDialog
+from PyQt5.QtGui import QFontDatabase
 from qgis.core import Qgis, QgsMessageLog
 from qgis.gui import QgisInterface
 
-from ..config import Config  # Import the Config class for API URL
-from ..ui import LoginWidget  # Import the LoginWidget from ui module
+from ..config import Config
+from ..ui import LoginWidget, MenuWidget  # <<< CHANGED: Import MenuWidget
 
 
 class IDPMPlugin:
     """
     Integrated Data Platform Management (IDPM) Plugin for QGIS.
-    This plugin provides a simple interface to manage user authentication
-    and access to the IDPM system, allowing users to log in and access
-    their data seamlessly.
     """
 
     iface: QgisInterface
@@ -29,12 +26,51 @@ class IDPMPlugin:
     def __init__(self, iface: QgisInterface) -> None:
         self.iface = iface
         self.action = None
-        self._menu_dialog_instance = None  # For singleton MenuDialog
+        self._menu_dialog_instance = None
         self._form_token_manager = None
         self._form_token_request_active = False
         self.login_dialog_instance = None
-
         self.load_custom_fonts()
+
+    def load_custom_fonts(self) -> None:
+        """Loads custom fonts from the assets folder."""
+        fonts_dir = os.path.join(Config.ASSETS_PATH, "fonts")
+        montserrat_dir = os.path.join(fonts_dir, "montserrat")
+
+        if not os.path.exists(montserrat_dir):
+            QgsMessageLog.logMessage(
+                f"Montserrat font directory not found: {montserrat_dir}",
+                "IDPMPlugin",
+                Qgis.Warning,
+            )
+            return
+
+        try:
+            font_files = os.listdir(montserrat_dir)
+        except FileNotFoundError:
+            QgsMessageLog.logMessage(
+                f"Could not list files in directory: {montserrat_dir}",
+                "IDPMPlugin",
+                Qgis.Warning,
+            )
+            return
+
+        for font_file in font_files:
+            font_path = os.path.join(montserrat_dir, font_file)
+            if font_file.lower().endswith(".ttf"):
+                font_id = QFontDatabase.addApplicationFont(font_path)
+                if font_id == -1:
+                    QgsMessageLog.logMessage(
+                        f"Failed to load font: {font_path}", "IDPMPlugin", Qgis.Warning
+                    )
+                else:
+                    font_families = QFontDatabase.applicationFontFamilies(font_id)
+                    if font_families:
+                        QgsMessageLog.logMessage(
+                            f"Successfully loaded font: {font_families[0]}",
+                            "IDPMPlugin",
+                            Qgis.Info,
+                        )
 
     def initGui(self) -> None:
         self.action = QAction("IDPM", self.iface.mainWindow())
@@ -53,42 +89,40 @@ class IDPMPlugin:
         QgsMessageLog.logMessage("MinimalPlugin unloaded.", "IDPMPlugin", Qgis.Info)
 
     def run(self) -> None:
-        # QgsMessageLog.logMessage("Plugin run method called.", "IDPMPlugin", Qgis.Info)
-        # settings = QSettings()
-        # token = settings.value("IDPMPlugin/token", defaultValue=None, type=str)
+        settings = QSettings()
+        token = settings.value("IDPMPlugin/token", defaultValue=None, type=str)
 
-        # if token:
-        #     self.show_menu_dialog_singleton()  # Use the singleton method
-        # else:
-        if self._form_token_request_active:  # Check flag
-            QgsMessageLog.logMessage(
-                "Form token request already in progress.",
-                "IDPMPlugin",
-                Qgis.Warning,
-            )
-            return
-        self.perform_login()  # Renamed for clarity, will fetch token and then show LoginDialog
+        if token:
+            self.show_menu_dialog_singleton()
+        else:
+            if self._form_token_request_active:
+                QgsMessageLog.logMessage(
+                    "Form token request already in progress.",
+                    "IDPMPlugin",
+                    Qgis.Warning,
+                )
+                return
+            self.perform_login()
 
     def show_menu_dialog_singleton(self) -> None:
         """
-        Creates and shows the MenuDialog if it doesn't exist (singleton),
+        Creates and shows the MenuWidget if it doesn't exist (singleton),
         or brings the existing one to the front.
         """
-        # if self._menu_dialog_instance is None:
-        #     QgsMessageLog.logMessage(
-        #         "Creating new MenuDialog (singleton).", "IDPMPlugin", Qgis.Info
-        #     )
-        #     self._menu_dialog_instance = MenuDialog(
-        #         iface=self.iface, parent=self.iface.mainWindow()
-        #     )
-        #     self._menu_dialog_instance.finished.connect(self._handle_menu_dialog_closed)
-        #     self._menu_dialog_instance.show()
-        # else:
-        #     QgsMessageLog.logMessage(
-        #         "Raising existing MenuDialog (singleton).", "IDPMPlugin", Qgis.Info
-        #     )
-        #     self._menu_dialog_instance.raise_()
-        #     self._menu_dialog_instance.activateWindow()
+        if self._menu_dialog_instance is None:
+            QgsMessageLog.logMessage(
+                "Creating new MenuWidget (singleton).", "IDPMPlugin", Qgis.Info
+            )
+            # <<< CHANGED: Use MenuWidget instead of MenuDialog
+            self._menu_dialog_instance = MenuWidget(iface=self.iface, parent=None)
+            self._menu_dialog_instance.finished.connect(self._handle_menu_dialog_closed)
+            self._menu_dialog_instance.show()
+        else:
+            QgsMessageLog.logMessage(
+                "Raising existing MenuWidget (singleton).", "IDPMPlugin", Qgis.Info
+            )
+            self._menu_dialog_instance.raise_()
+            self._menu_dialog_instance.activateWindow()
 
     def _handle_menu_dialog_closed(self, result_code: int) -> None:
         """Slot called when MenuDialog is closed, clears the instance reference."""
@@ -99,37 +133,32 @@ class IDPMPlugin:
         )
         self._menu_dialog_instance = None
 
-    def perform_login(self) -> None:  # Fetches form token
-        self._form_token_request_active = True  # Set flag
+    def perform_login(self) -> None:
+        self._form_token_request_active = True
         QgsMessageLog.logMessage(
             "perform_login: Fetching form token.", "IDPMPlugin", Qgis.Info
         )
-
         message_bar = self.iface.messageBar()
         if message_bar is not None:
             message_bar.pushMessage(
                 "IDPMPlugin", "Preparing login...", level=Qgis.Info, duration=0
             )
-
         self._form_token_manager = QNetworkAccessManager()
-        self._form_token_manager.finished.connect(
-            self.handle_form_token_response
-        )  # Changed handler name
+        self._form_token_manager.finished.connect(self.handle_form_token_response)
         self._form_token_manager.get(
             QNetworkRequest(QUrl(f"{Config.API_URL}/auth/formtoken"))
         )
 
-    def handle_form_token_response(self, reply) -> None:  # Changed name from _reverted
+    def handle_form_token_response(self, reply) -> None:
         message_bar = self.iface.messageBar()
         if message_bar is not None:
             message_bar.clearWidgets()
 
-        self._form_token_request_active = False  # Reset flag
+        self._form_token_request_active = False
         form_token = None
         error_occurred = False
 
         try:
-            # ... (Keep your full error handling for the reply as in your working version)
             if reply.error():
                 QMessageBox.critical(
                     self.iface.mainWindow(),
@@ -187,83 +216,28 @@ class IDPMPlugin:
         if error_occurred or not form_token:
             return
 
-        # If a dialog is already open, bring it to the front
         if self.login_dialog_instance:
             self.login_dialog_instance.raise_()
             self.login_dialog_instance.activateWindow()
             return
 
-        # Create and store the instance on self to prevent garbage collection
         self.login_dialog_instance = LoginWidget(
             form_token=form_token,
             iface=self.iface,
             parent=None,
         )
-        # Connect to the finished signal to handle the result later
         self.login_dialog_instance.finished.connect(self.handle_login_dialog_closed)
-
-        # Show the dialog modelessly instead of executing it
         self.login_dialog_instance.show()
 
     def handle_login_dialog_closed(self, result: int) -> None:
-        """
-        This new method is called when the LoginWidget is closed.
-        The 'result' is QDialog.Accepted (1) or QDialog.Rejected (0).
-        """
         if result == QDialog.Accepted:
             QgsMessageLog.logMessage("LoginDialog successful.", "IDPMPlugin", Qgis.Info)
-            # The token is already saved by the widget. Now show the main menu.
             QTimer.singleShot(0, self.show_menu_dialog_singleton)
         else:
             QgsMessageLog.logMessage(
                 "LoginDialog failed or cancelled.", "IDPMPlugin", Qgis.Info
             )
 
-        # Schedule the dialog for deletion and clear the reference
         if self.login_dialog_instance:
             self.login_dialog_instance.deleteLater()
             self.login_dialog_instance = None
-
-    def load_custom_fonts(self) -> None:
-        """Loads custom fonts from the assets folder."""
-        fonts_dir = os.path.join(Config.ASSETS_PATH, "fonts")
-        # Define the specific subdirectory for the fonts
-        montserrat_dir = os.path.join(fonts_dir, "montserrat")
-
-        if not os.path.exists(montserrat_dir):
-            QgsMessageLog.logMessage(
-                f"Montserrat font directory not found: {montserrat_dir}",
-                "IDPMPlugin",
-                Qgis.Warning,
-            )
-            return
-
-        try:
-            font_files = os.listdir(montserrat_dir)
-        except FileNotFoundError:
-            QgsMessageLog.logMessage(
-                f"Could not list files in directory: {montserrat_dir}",
-                "IDPMPlugin",
-                Qgis.Warning,
-            )
-            return
-
-        for font_file in font_files:
-            # Construct the full, correct path to the font file inside the subdirectory
-            font_path = os.path.join(montserrat_dir, font_file)
-
-            # Only process files with a .ttf extension
-            if font_file.lower().endswith(".ttf"):
-                font_id = QFontDatabase.addApplicationFont(font_path)
-                if font_id == -1:
-                    QgsMessageLog.logMessage(
-                        f"Failed to load font: {font_path}", "IDPMPlugin", Qgis.Warning
-                    )
-                else:
-                    font_families = QFontDatabase.applicationFontFamilies(font_id)
-                    if font_families:
-                        QgsMessageLog.logMessage(
-                            f"Successfully loaded font: {font_families[0]}",
-                            "IDPMPlugin",
-                            Qgis.Info,
-                        )
