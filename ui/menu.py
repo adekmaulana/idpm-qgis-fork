@@ -27,7 +27,8 @@ from qgis.core import Qgis, QgsMessageLog
 from ..config import Config
 from .base_dialog import BaseDialog
 from .profile import ProfileDialog
-from .list_raster import ImageListDialog
+
+# from .list_raster import ImageListDialog  <- This import is moved to prevent circular dependency
 from .loading import LoadingDialog
 from .custom_input_dialog import CustomInputDialog
 
@@ -344,6 +345,10 @@ class MenuWidget(BaseDialog):
         self.network_manager.get(request)
 
     def handle_image_list_response(self, reply: QNetworkReply):
+        from .list_raster import (
+            ImageListDialog,
+        )  # Local import to fix circular dependency
+
         if self.loading_dialog:
             self.loading_dialog.stop_animation()
             self.loading_dialog.hide()
