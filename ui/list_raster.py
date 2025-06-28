@@ -39,6 +39,7 @@ from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkRepl
 
 from ..config import Config
 from .base_dialog import BaseDialog
+from .ndvi_style_dialog import NdviStyleDialog
 from ..core import NdvITask, RasterAsset
 
 PLUGIN_LAYER_GROUP_NAME = "IDPM Layers"
@@ -81,7 +82,7 @@ class RasterItemWidget(QWidget):
 
     downloadVisualRequested = pyqtSignal(RasterAsset)
     openVisualRequested = pyqtSignal(RasterAsset)
-    processNdviRequested = pyqtSignal(RasterAsset)
+    processNdviRequested = pyqtSignal(RasterAsset, list)
     openNdviRequested = pyqtSignal(RasterAsset)
 
     def __init__(self, asset: RasterAsset, parent: Optional[QWidget] = None):
@@ -118,28 +119,31 @@ class RasterItemWidget(QWidget):
         published_label = QLabel(f"Published on: {date_str}")
         published_label.setObjectName("rasterSubtitle")
 
-        cloud_label = QLabel(f"{self.asset.cloud_cover:.2f}%")
+        cloud_label = QLabel(f"Cloud Cover: {self.asset.cloud_cover:.2f}%")
         cloud_label.setObjectName("rasterCloud")
 
         details_layout.addWidget(self.stac_id_label)
+        details_layout.addStretch(1)
         details_layout.addWidget(published_label)
+        details_layout.addStretch(1)
         details_layout.addWidget(cloud_label)
-        details_layout.addStretch()
+        details_layout.addStretch(2)
 
         main_layout.addLayout(details_layout)
         main_layout.addStretch()
 
-        # --- Action Buttons and Progress Bars ---
         right_column_layout = self._create_actions_layout()
         main_layout.addLayout(right_column_layout)
 
         self.update_ui_based_on_local_files()
 
     def _create_actions_layout(self) -> QVBoxLayout:
-        """Creates the layout for buttons and progress bars."""
         layout = QVBoxLayout()
         layout.setSpacing(10)
         layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(10)
 
         self.btn_visual = QPushButton()
         self.btn_visual.setObjectName("actionButton")
@@ -147,15 +151,17 @@ class RasterItemWidget(QWidget):
         if os.path.exists(download_icon_path):
             self.btn_visual.setIcon(QIcon(download_icon_path))
         self.btn_visual.clicked.connect(self._on_visual_button_clicked)
-        layout.addWidget(self.btn_visual)
-
-        self.progress_bar_visual = self._create_progress_bar()
-        layout.addWidget(self.progress_bar_visual)
+        buttons_layout.addWidget(self.btn_visual)
 
         self.btn_ndvi = QPushButton()
         self.btn_ndvi.setObjectName("actionButton")
         self.btn_ndvi.clicked.connect(self._on_ndvi_button_clicked)
-        layout.addWidget(self.btn_ndvi)
+        buttons_layout.addWidget(self.btn_ndvi)
+
+        layout.addLayout(buttons_layout)
+
+        self.progress_bar_visual = self._create_progress_bar()
+        layout.addWidget(self.progress_bar_visual)
 
         ndvi_progress_layout = QHBoxLayout()
         self.progress_bar_nir = self._create_progress_bar()
@@ -215,13 +221,16 @@ class RasterItemWidget(QWidget):
         if os.path.exists(ndvi_path) and os.path.getsize(ndvi_path) > 0:
             self.openNdviRequested.emit(self.asset)
         else:
-            self.btn_visual.setEnabled(False)
-            self.btn_ndvi.setEnabled(False)
-            self.progress_bar_nir.setVisible(True)
-            self.progress_bar_red.setVisible(True)
-            self.status_label.setVisible(True)
-            self.status_label.setText("Downloading bands...")
-            self.processNdviRequested.emit(self.asset)
+            style_dialog = NdviStyleDialog(self)
+            if style_dialog.exec_() == QDialog.Accepted:
+                classification_items = style_dialog.get_classification_items()
+                self.btn_visual.setEnabled(False)
+                self.btn_ndvi.setEnabled(False)
+                self.progress_bar_nir.setVisible(True)
+                self.progress_bar_red.setVisible(True)
+                self.status_label.setVisible(True)
+                self.status_label.setText("Downloading bands...")
+                self.processNdviRequested.emit(self.asset, classification_items)
 
     def update_download_progress(
         self, bytes_received: int, bytes_total: int, band: str
@@ -240,16 +249,13 @@ class RasterItemWidget(QWidget):
         visual_path = self.asset.get_local_path("visual")
         if os.path.exists(visual_path) and os.path.getsize(visual_path) > 0:
             self.btn_visual.setText("Open Visual")
-            self.stac_id_label.setStyleSheet("color: green; font-weight: bold;")
         else:
             self.btn_visual.setText("Download Visual")
-            self.stac_id_label.setStyleSheet("")
 
         ndvi_path = self.asset.get_local_path("ndvi")
         if os.path.exists(ndvi_path) and os.path.getsize(ndvi_path) > 0:
             self.btn_ndvi.setText("Open NDVI")
             self.btn_ndvi.setProperty("highlight", False)
-            self.stac_id_label.setStyleSheet("color: darkblue; font-weight: bold;")
         else:
             self.btn_ndvi.setText("Process NDVI")
             self.btn_ndvi.setProperty("highlight", True)
@@ -269,8 +275,6 @@ class RasterItemWidget(QWidget):
 
 
 class ImageListDialog(BaseDialog):
-    """The dialog to display a list of raster images."""
-
     def __init__(
         self,
         data: List[Dict[str, Any]],
@@ -285,10 +289,6 @@ class ImageListDialog(BaseDialog):
             if "properties" in feature
         ]
         self.download_network_manager = QNetworkAccessManager(self)
-
-        if not os.path.exists(Config.DOWNLOAD_DIR):
-            os.makedirs(Config.DOWNLOAD_DIR)
-
         self.active_operations: Dict[str, Any] = {}
         self.current_page = 1
         self.items_per_page = 5
@@ -303,20 +303,19 @@ class ImageListDialog(BaseDialog):
         main_layout.setContentsMargins(30, 10, 30, 30)
         main_layout.addLayout(self._create_top_bar())
         main_layout.addSpacing(20)
-
         header_layout = QHBoxLayout()
         title_vbox = QVBoxLayout()
-        title = QLabel("List Raster")
-        title.setObjectName("pageTitle")
-        subtitle = QLabel("Select raster data to download or process into NDVI.")
-        subtitle.setObjectName("pageSubtitle")
-        title_vbox.addWidget(title)
-        title_vbox.addWidget(subtitle)
+        title_vbox.addWidget(QLabel("List Raster", objectName="pageTitle"))
+        title_vbox.addWidget(
+            QLabel(
+                "Select raster data to download or process into NDVI.",
+                objectName="pageSubtitle",
+            )
+        )
         header_layout.addLayout(title_vbox)
         header_layout.addStretch()
         main_layout.addLayout(header_layout)
         main_layout.addSpacing(20)
-
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setObjectName("scrollArea")
@@ -330,46 +329,35 @@ class ImageListDialog(BaseDialog):
         self.apply_stylesheet()
 
     def _create_top_bar(self) -> QHBoxLayout:
-        top_bar_layout = QHBoxLayout()
-        top_bar_layout.setContentsMargins(0, 0, 0, 10)
-        self.back_button = QPushButton("← Back to Menu")
-        self.back_button.setObjectName("backButton")
-        self.back_button.setCursor(Qt.PointingHandCursor)
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 10)
+        self.back_button = QPushButton(
+            "← Back to Menu", objectName="backButton", cursor=Qt.PointingHandCursor
+        )
         self.back_button.clicked.connect(self.accept)
-        top_bar_layout.addWidget(self.back_button)
-        top_bar_layout.addStretch()
-        controls_layout = self._create_window_controls()
-        top_bar_layout.addLayout(controls_layout)
-        return top_bar_layout
+        layout.addWidget(self.back_button)
+        layout.addStretch()
+        layout.addLayout(self._create_window_controls())
+        return layout
 
     def _create_pagination_controls(self) -> QHBoxLayout:
-        pagination_layout = QHBoxLayout()
-        self.prev_button = QPushButton("← Previous")
-        self.prev_button.setObjectName("paginationButton")
+        layout = QHBoxLayout()
+        self.prev_button = QPushButton("← Previous", objectName="paginationButton")
         self.prev_button.clicked.connect(self.prev_page)
-
-        self.page_label = QLabel("Page 1")
-        self.page_label.setObjectName("pageLabel")
-
-        self.next_button = QPushButton("Next →")
-        self.next_button.setObjectName("paginationButton")
+        self.page_label = QLabel("Page 1", objectName="pageLabel")
+        self.next_button = QPushButton("Next →", objectName="paginationButton")
         self.next_button.clicked.connect(self.next_page)
-
-        pagination_layout.addWidget(self.prev_button)
-        pagination_layout.addStretch()
-        pagination_layout.addWidget(self.page_label)
-        pagination_layout.addStretch()
-        pagination_layout.addWidget(self.next_button)
-        return pagination_layout
+        layout.addWidget(self.prev_button)
+        layout.addStretch()
+        layout.addWidget(self.page_label)
+        layout.addStretch()
+        layout.addWidget(self.next_button)
+        return layout
 
     def update_list_and_pagination(self):
         while self.list_layout.count() > 1:
             item = self.list_layout.takeAt(0)
             if item.widget():
-                # Cancel any ongoing downloads for the item being removed
-                if isinstance(item.widget(), RasterItemWidget):
-                    # Ensure RasterItemWidget has a method to cancel its network requests if any
-                    pass
                 item.widget().deleteLater()
 
         start_index = (self.current_page - 1) * self.items_per_page
@@ -421,30 +409,17 @@ class ImageListDialog(BaseDialog):
 
     def add_basemap_global_osm(self, iface: QgisInterface):
         layer_name = "OpenStreetMap (IDPM Basemap)"
-        log_tag = "IDPMPlugin"
-        plugin_group = self.get_or_create_plugin_layer_group()
+        # A simple check to see if a layer with the same name exists in the project.
+        # This isn't foolproof but good enough for this purpose.
+        if QgsProject.instance().mapLayersByName(layer_name):
+            return
 
-        if plugin_group:
-            for child_node in plugin_group.children():
-                if hasattr(child_node, "name") and child_node.name() == layer_name:
-                    if hasattr(child_node, "layer"):
-                        return
-                    return
-
-        url = "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        layer_source = f"type=xyz&url={url}&zmax=19&zmin=0"
-        layer = QgsRasterLayer(layer_source, layer_name, "wms")
-
+        url = "type=xyz&url=https://a.tile.openstreetmap.org/{z}/{x}/{y}.png&zmax=19&zmin=0"
+        layer = QgsRasterLayer(url, layer_name, "wms")
         if layer.isValid():
             QgsProject.instance().addMapLayer(layer, False)
-            if plugin_group:
-                plugin_group.addLayer(layer)
-        else:
-            QgsMessageLog.logMessage(
-                f"Failed to load basemap '{layer_name}'. Error: {layer.error().summary()}",
-                log_tag,
-                Qgis.Critical,
-            )
+            if group := self.get_or_create_plugin_layer_group():
+                group.addLayer(layer)
 
     def _get_item_widget(self, stac_id: str) -> Optional[RasterItemWidget]:
         for i in range(self.list_layout.count()):
@@ -470,7 +445,9 @@ class ImageListDialog(BaseDialog):
             asset.get_local_path("visual"), f"{asset.stac_id}_Visual"
         )
 
-    def _handle_process_ndvi_requested(self, asset: RasterAsset):
+    def _handle_process_ndvi_requested(
+        self, asset: RasterAsset, classification_items: list
+    ):
         if not asset.nir_url or not asset.red_url:
             QMessageBox.warning(
                 self,
@@ -481,7 +458,11 @@ class ImageListDialog(BaseDialog):
                 item_widget.update_ui_based_on_local_files()
             return
 
-        self.active_operations[asset.stac_id] = {"expected": 2, "completed": {}}
+        self.active_operations[asset.stac_id] = {
+            "expected": 2,
+            "completed": {},
+            "style": classification_items,
+        }
         for band_type, url in [("nir", asset.nir_url), ("red", asset.red_url)]:
             save_path = asset.get_local_path(band_type)
             if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
@@ -490,7 +471,12 @@ class ImageListDialog(BaseDialog):
                 self._start_download(asset, band_type, url, save_path)
 
     def _handle_open_ndvi_requested(self, asset: RasterAsset):
-        self._load_ndvi_into_qgis_layer(asset.get_local_path("ndvi"), asset.stac_id)
+        style_dialog = NdviStyleDialog(self)
+        if style_dialog.exec_() == QDialog.Accepted:
+            items = style_dialog.get_classification_items()
+            self._load_ndvi_into_qgis_layer(
+                asset.get_local_path("ndvi"), asset.stac_id, items
+            )
 
     def _start_download(self, asset: RasterAsset, band: str, url: str, save_path: str):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -540,15 +526,20 @@ class ImageListDialog(BaseDialog):
         reply.deleteLater()
 
     def _on_band_download_complete(self, stac_id: str, band: str, save_path: str):
-        op = self.active_operations.get(stac_id, {})
+        op = self.active_operations.get(stac_id)
+        if not op:
+            return
+
         op["completed"][band] = save_path
         if len(op["completed"]) == op.get("expected", 0):
             self._calculate_ndvi(
-                stac_id, op["completed"]["red"], op["completed"]["nir"]
+                stac_id, op["completed"]["red"], op["completed"]["nir"], op["style"]
             )
             del self.active_operations[stac_id]
 
-    def _calculate_ndvi(self, stac_id: str, red_path: str, nir_path: str):
+    def _calculate_ndvi(
+        self, stac_id: str, red_path: str, nir_path: str, style_items: list
+    ):
         folder_path = os.path.dirname(red_path)
         task = NdvITask(red_path, nir_path, folder_path, stac_id)
         progress = QProgressDialog(
@@ -557,18 +548,18 @@ class ImageListDialog(BaseDialog):
         progress.setWindowModality(Qt.WindowModal)
         task.progressChanged.connect(progress.setValue)
         task.calculationFinished.connect(
-            lambda path: self._on_ndvi_task_finished(path, stac_id)
+            lambda path: self._on_ndvi_task_finished(path, stac_id, style_items)
         )
         task.errorOccurred.connect(lambda err: self._on_ndvi_task_error(err, stac_id))
         progress.canceled.connect(task.cancel)
         QgsApplication.taskManager().addTask(task)
 
-    def _on_ndvi_task_finished(self, ndvi_path: str, stac_id: str):
-        QgsApplication.taskManager().allTasksFinished.emit()  # Helps close progress dialog
+    def _on_ndvi_task_finished(self, ndvi_path: str, stac_id: str, style_items: list):
+        QgsApplication.taskManager().allTasksFinished.emit()
         QMessageBox.information(
             self, "NDVI Calculated", f"NDVI calculation completed for {stac_id}."
         )
-        self._load_ndvi_into_qgis_layer(ndvi_path, stac_id)
+        self._load_ndvi_into_qgis_layer(ndvi_path, stac_id, style_items)
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
 
@@ -591,7 +582,9 @@ class ImageListDialog(BaseDialog):
         self.iface.mapCanvas().setExtent(layer.extent())
         self.iface.mapCanvas().refresh()
 
-    def _load_ndvi_into_qgis_layer(self, ndvi_path: str, raster_id: str) -> bool:
+    def _load_ndvi_into_qgis_layer(
+        self, ndvi_path: str, raster_id: str, classification_items: list
+    ) -> bool:
         layer = QgsRasterLayer(ndvi_path, f"{raster_id}_NDVI")
         if not layer.isValid():
             QMessageBox.warning(
@@ -601,17 +594,8 @@ class ImageListDialog(BaseDialog):
 
         color_ramp = QgsColorRampShader()
         color_ramp.setColorRampType(QgsColorRampShader.Discrete)
-        items = [
-            QgsColorRampShader.ColorRampItem(
-                0.0, QColor(0, 0, 255), "Water/Non-Vegetation"
-            ),
-            QgsColorRampShader.ColorRampItem(
-                0.2, QColor(255, 255, 0), "Jarang (Sparse)"
-            ),
-            QgsColorRampShader.ColorRampItem(0.5, QColor(0, 255, 0), "Sedang (Medium)"),
-            QgsColorRampShader.ColorRampItem(1.0, QColor(0, 100, 0), "Rapat (Dense)"),
-        ]
-        color_ramp.setColorRampItemList(items)
+        color_ramp.setColorRampItemList(classification_items)
+
         shader = QgsRasterShader()
         shader.setRasterShaderFunction(color_ramp)
         renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
@@ -653,7 +637,6 @@ class ImageListDialog(BaseDialog):
         self.setStyleSheet(qss)
 
     def closeEvent(self, event):
-        # Disconnect signals to prevent issues on close
         try:
             self.download_network_manager.finished.disconnect()
         except TypeError:
