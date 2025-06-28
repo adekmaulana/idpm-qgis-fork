@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
     QStyleOption,
     QStyle,
 )
-from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter
+from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QMouseEvent
 from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtCore import Qt, QSize, QUrl, QSettings, QByteArray, QTimer
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
@@ -26,20 +26,10 @@ from qgis.core import Qgis, QgsMessageLog
 
 from ..config import Config
 from .base_dialog import BaseDialog
-
-
-# --- Placeholder for the dialog that will show the list of images ---
-# We will create this file later.
-class ImageListDialog(QDialog):
-    def __init__(self, data, iface, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Image List (Placeholder)")
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("This is a placeholder for the image list."))
-        self.setLayout(layout)
-
-
-# --- End of Placeholder ---
+from .profile import ProfileDialog
+from .list_raster import ImageListDialog
+from .loading import LoadingDialog
+from .custom_input_dialog import CustomInputDialog
 
 
 class ActionCard(QWidget):
@@ -123,13 +113,22 @@ class MenuWidget(BaseDialog):
 
         self.image_list_dialog = None
         self.profile_dialog = None
-        self.user_profile = {}  # To store loaded profile data
+        self.loading_dialog = None
+        self.user_profile = {}
 
-        # Define path for the new background
         self.main_bg_path = os.path.join(Config.ASSETS_PATH, "images", "menu_bg.jpg")
 
         self.init_menu_ui()
         self._load_and_apply_profile()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        # <<< FIX: Only process mouse events if no other modal dialog is active >>>
+        active_modal = QApplication.activeModalWidget()
+        if active_modal and active_modal != self:
+            return
+
+        # If no other modal is active, proceed with the default behavior
+        super().mousePressEvent(event)
 
     def init_menu_ui(self) -> None:
         """Sets up the menu-specific UI components."""
@@ -138,10 +137,9 @@ class MenuWidget(BaseDialog):
         main_layout = QVBoxLayout(self.main_container)
         main_layout.setContentsMargins(30, 10, 30, 30)
 
-        # --- Top bar with profile and window controls ---
         top_bar_layout = QHBoxLayout()
 
-        self.profile_button = QPushButton("User")  # Default text
+        self.profile_button = QPushButton("User")
         self.profile_button.setObjectName("profileButton")
 
         profile_icon_path = os.path.join(
@@ -170,7 +168,6 @@ class MenuWidget(BaseDialog):
         main_layout.addLayout(top_bar_layout)
         main_layout.addStretch(1)
 
-        # --- Main content ---
         content_layout = QVBoxLayout()
         content_layout.setAlignment(Qt.AlignCenter)
 
@@ -207,7 +204,6 @@ class MenuWidget(BaseDialog):
         content_layout.addWidget(subtitle_label)
         content_layout.addWidget(description_label)
 
-        # --- Action Buttons ---
         button_container = QWidget()
         button_layout = QHBoxLayout(button_container)
         button_layout.setSpacing(20)
@@ -241,7 +237,6 @@ class MenuWidget(BaseDialog):
         self.apply_stylesheet()
 
     def _load_and_apply_profile(self):
-        """Loads user profile from QSettings and updates the UI."""
         settings = QSettings()
         profile_json_str = settings.value("IDPMPlugin/user_profile", None)
         if not profile_json_str:
@@ -266,22 +261,14 @@ class MenuWidget(BaseDialog):
             )
 
     def open_profile_dialog(self):
-        """
-        Hides the menu and shows the profile dialog. When the profile
-        dialog is closed, the menu is shown again.
-        """
-        from .profile import ProfileDialog  # Import here to avoid circular dependencies
-
         if self.profile_dialog is None:
             self.profile_dialog = ProfileDialog(self.iface, self)
 
-        self.hide()  # Hide the menu
-        # The .exec_() call will block until the profile dialog is closed
-        result = self.profile_dialog.exec_()
-        self.show()  # Show the menu again after the profile dialog is closed
+        self.hide()
+        self.profile_dialog.exec_()
+        self.show()
 
     def handle_logout(self):
-        """Handles user logout."""
         confirm = QMessageBox.question(
             self,
             "Confirm Logout",
@@ -294,47 +281,73 @@ class MenuWidget(BaseDialog):
             settings.remove("IDPMPlugin/token")
             settings.remove("IDPMPlugin/user_profile")
             QgsMessageLog.logMessage("User logged out.", "IDPMPlugin", Qgis.Info)
-            self.accept()  # Close the menu dialog
+            self.accept()
 
     def open_image_list(self, event=None):
-        """Fetches and displays the list of raster images."""
         if not self.user_profile:
             QMessageBox.critical(self, "Error", "User profile not loaded.")
             return
 
+        selected_wilker = None
         try:
             wilker_str = self.user_profile.get("wilker", "")
-            wilker_list = [w.strip() for w in wilker_str.split(",") if w.strip()]
+            wilker_list = sorted(
+                [w.strip() for w in wilker_str.split(",") if w.strip()]
+            )
+
             if not wilker_list:
                 QMessageBox.warning(
                     self, "No Working Area", "No valid working area found."
                 )
                 return
 
-            selected_wilker, ok = QInputDialog.getItem(
-                self,
-                "Select Working Area",
-                "Choose a working area:",
-                wilker_list,
-                0,
-                False,
-            )
-            if not (ok and selected_wilker):
-                return
+            if len(wilker_list) == 1:
+                selected_wilker = wilker_list[0]
+            else:
+                dialog = CustomInputDialog(
+                    self,
+                    "Select Working Area",
+                    "Please select your working area:",
+                    wilker_list,
+                )
+                if dialog.exec_() == QDialog.Accepted:
+                    selected_wilker = dialog.selectedItem()
+                else:
+                    return
+
         except Exception as e:
             QMessageBox.critical(
                 self, "Profile Error", f"Could not read user profile: {e}"
             )
             return
 
+        if not selected_wilker:
+            return
+
+        settings = QSettings()
+        token = settings.value("IDPMPlugin/token", None)
+        if not token:
+            QMessageBox.critical(self, "Authentication Error", "You are not logged in.")
+            return
+
+        if not self.loading_dialog:
+            self.loading_dialog = LoadingDialog(self)
+        self.loading_dialog.start_animation()
+        self.loading_dialog.show()
+
         request = QNetworkRequest(
-            QUrl(f"{Config.API_URL}/geoportal/sentinel/{selected_wilker}")
+            QUrl(f"{Config.API_URL}/geoportal/sentinel/catalog/{selected_wilker}")
         )
+        request.setRawHeader(b"Authorization", f"Bearer {token}".encode())
+
         self.network_manager.finished.connect(self.handle_image_list_response)
         self.network_manager.get(request)
 
     def handle_image_list_response(self, reply: QNetworkReply):
-        """Handles the response from the image list API endpoint."""
+        if self.loading_dialog:
+            self.loading_dialog.stop_animation()
+            self.loading_dialog.hide()
+
         try:
             self.network_manager.finished.disconnect(self.handle_image_list_response)
         except TypeError:
@@ -352,12 +365,15 @@ class MenuWidget(BaseDialog):
 
         try:
             response = json.loads(response_data.data().decode("utf-8"))
-            features = response.get("stac", {}).get("features", [])
+            features = response.get("data", {}).get("features", [])
 
             if self.image_list_dialog:
                 self.image_list_dialog.close()
+
             self.image_list_dialog = ImageListDialog(features, self.iface, parent=self)
-            self.image_list_dialog.show()
+            self.hide()
+            self.image_list_dialog.exec_()
+            self.show()
 
         except json.JSONDecodeError:
             QMessageBox.critical(self, "Error", "Invalid JSON response for image list.")

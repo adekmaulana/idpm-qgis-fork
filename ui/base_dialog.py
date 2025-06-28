@@ -1,6 +1,5 @@
-import sys
 from typing import Optional
-
+import sys
 from PyQt5.QtCore import Qt, QSize, QPoint, QTimer
 from PyQt5.QtGui import QMouseEvent, QFont
 from PyQt5.QtWidgets import (
@@ -107,8 +106,9 @@ class BaseDialog(QDialog):
     # --- Methods for dragging and resizing the frameless window ---
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        # <<< FIX: Only process mouse events if this is the active window >>>
-        if not self.isActiveWindow():
+        # <<< FIX: Only process mouse events if no other modal dialog is active >>>
+        active_modal = QApplication.activeModalWidget()
+        if active_modal and active_modal != self:
             return
 
         if event.button() == Qt.LeftButton:
