@@ -274,7 +274,14 @@ class RasterItemWidget(QWidget):
             self.btn_ndvi.setText("Open NDVI")
             self.btn_ndvi.setProperty("highlight", False)
         else:
-            self.btn_ndvi.setText("Process NDVI & False Color")
+            if self.asset.green_url and self.asset.nir_url and self.asset.red_url:
+                self.btn_ndvi.setText("Process NDVI / False Color")
+            elif not self.asset.green_url:
+                self.btn_ndvi.setText("Process NDVI")
+            else:
+                self.btn_ndvi.setText("Not enough data for NDVI")
+                self.btn_ndvi.setEnabled(False)
+
             self.btn_ndvi.setProperty("highlight", True)
 
         fc_path = self.asset.get_local_path("false_color")

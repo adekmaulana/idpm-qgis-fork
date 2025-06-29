@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QMouseEvent
 from PyQt5.QtSvg import QSvgRenderer
-from PyQt5.QtCore import Qt, QSize, QUrl, QSettings, QByteArray, QTimer
+from PyQt5.QtCore import Qt, QSize, QUrl, QSettings, QByteArray, QTimer, pyqtSignal
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from qgis.gui import QgisInterface
 from qgis.core import Qgis, QgsMessageLog
@@ -35,6 +35,8 @@ from .custom_input_dialog import CustomInputDialog
 
 class ActionCard(QWidget):
     """A custom card-like button with an icon, title, and subtitle."""
+
+    clicked = pyqtSignal()
 
     def __init__(
         self,
@@ -88,6 +90,23 @@ class ActionCard(QWidget):
         main_layout.addWidget(title_label)
         main_layout.addWidget(subtitle_label)
         main_layout.addStretch()
+
+    def mousePressEvent(self, event: QMouseEvent):
+        """
+        Absorb the mouse press event to prevent the parent widget from
+        interpreting it as the start of a drag operation.
+        """
+        # By implementing this method and doing nothing, we effectively
+        # consume the event and stop it from propagating to the parent.
+        pass
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        """
+        On mouse release, if the cursor is still inside the widget's bounds,
+        we emit our custom clicked signal.
+        """
+        if self.rect().contains(event.pos()):
+            self.clicked.emit()
 
     def paintEvent(self, event):
         """
@@ -224,7 +243,7 @@ class MenuWidget(BaseDialog):
             icon_path_existing, "Open Data Existing", "View Detail"
         )
 
-        self.card_list_raster.mouseReleaseEvent = self.open_image_list
+        self.card_list_raster.clicked.connect(self.open_image_list)
 
         button_layout.addWidget(self.card_list_raster)
         button_layout.addWidget(self.card_open_potensi)
@@ -265,8 +284,10 @@ class MenuWidget(BaseDialog):
         if self.profile_dialog is None:
             self.profile_dialog = ProfileDialog(self.iface, self)
 
+        saved_pos = self.pos()
         self.hide()
         self.profile_dialog.exec_()
+        self.move(saved_pos)
         self.show()
 
     def handle_logout(self):
@@ -331,9 +352,10 @@ class MenuWidget(BaseDialog):
             QMessageBox.critical(self, "Authentication Error", "You are not logged in.")
             return
 
-        if not self.loading_dialog:
+        if self.loading_dialog is None:
             self.loading_dialog = LoadingDialog(self)
-        self.loading_dialog.start_animation()
+
+        self.setEnabled(False)  # Disable the menu
         self.loading_dialog.show()
 
         request = QNetworkRequest(
@@ -349,9 +371,11 @@ class MenuWidget(BaseDialog):
             ImageListDialog,
         )  # Local import to fix circular dependency
 
+        self.setEnabled(True)  # Re-enable the menu
         if self.loading_dialog:
-            self.loading_dialog.stop_animation()
-            self.loading_dialog.hide()
+            self.loading_dialog.close()
+            self.loading_dialog.deleteLater()
+            self.loading_dialog = None
 
         try:
             self.network_manager.finished.disconnect(self.handle_image_list_response)
@@ -376,8 +400,11 @@ class MenuWidget(BaseDialog):
                 self.image_list_dialog.close()
 
             self.image_list_dialog = ImageListDialog(features, self.iface, parent=self)
+
+            saved_pos = self.pos()
             self.hide()
             self.image_list_dialog.exec_()
+            self.move(saved_pos)
             self.show()
 
         except json.JSONDecodeError:
