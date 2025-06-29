@@ -36,6 +36,7 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QProgressDialog,
     QComboBox,
+    QFrame,
 )
 from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QPainterPath, QBrush, QColor
 from PyQt5.QtCore import Qt, QSize, QUrl, QRectF, pyqtSignal
@@ -236,44 +237,33 @@ class RasterItemWidget(QWidget):
                     pbar.setFormat(f"{band.upper()}: {progress}%")
 
     def update_ui_based_on_local_files(self):
-        """
-        Updates the text and state of buttons based on whether the final
-        or source files exist locally.
-        """
         visual_path = self.asset.get_local_path("visual")
         ndvi_path = self.asset.get_local_path("ndvi")
         fc_path = self.asset.get_local_path("false_color")
 
-        # Reset visibility of progress bars and status label
         self.progress_bar_visual.setVisible(False)
         self.progress_bar_nir.setVisible(False)
         self.progress_bar_red.setVisible(False)
         self.progress_bar_green.setVisible(False)
         self.status_label.setVisible(False)
 
-        # Enable buttons by default, then disable them based on logic
-        self.btn_visual.setEnabled(True)
-        self.btn_ndvi.setEnabled(True)
+        self.set_buttons_enabled(True)
 
-        # --- Configure Visual Button ---
         if os.path.exists(visual_path) and os.path.getsize(visual_path) > 0:
             self.btn_visual.setText("Open Visual")
         else:
             self.btn_visual.setText("Download Visual")
 
-        # --- Configure NDVI / Processing Button ---
         if os.path.exists(ndvi_path) and os.path.getsize(ndvi_path) > 0:
             self.btn_ndvi.setText("Open NDVI")
             self.btn_ndvi.setProperty("highlight", False)
         else:
-            # Check for source bands if final product doesn't exist
             has_nir = bool(self.asset.nir_url)
             has_red = bool(self.asset.red_url)
-
             if has_nir and has_red:
                 has_green = bool(self.asset.green_url)
                 if has_green:
-                    self.btn_ndvi.setText("Process NDVI & False Color")
+                    self.btn_ndvi.setText("Process NDVI && False Color")
                 else:
                     self.btn_ndvi.setText("Process NDVI")
                 self.btn_ndvi.setProperty("highlight", True)
@@ -282,7 +272,6 @@ class RasterItemWidget(QWidget):
                 self.btn_ndvi.setProperty("highlight", False)
                 self.btn_ndvi.setEnabled(False)
 
-        # --- Configure False Color Button ---
         self.btn_false_color.setVisible(
             os.path.exists(fc_path) and os.path.getsize(fc_path) > 0
         )
@@ -314,7 +303,7 @@ class ImageListDialog(BaseDialog):
         self.current_page = 1
         self.items_per_page = 5
         self.init_list_ui()
-        self._apply_filters()  # Initial filter
+        self._apply_filters()
         self.add_basemap_global_osm(self.iface)
 
     def init_list_ui(self):
@@ -336,7 +325,6 @@ class ImageListDialog(BaseDialog):
         header_layout.addLayout(title_vbox)
         header_layout.addStretch()
 
-        # Cloud Cover Filter
         filter_layout = QHBoxLayout()
         filter_layout.setSpacing(10)
         filter_layout.addWidget(QLabel("Cloud Cover:", objectName="filterLabel"))
@@ -353,9 +341,15 @@ class ImageListDialog(BaseDialog):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setObjectName("scrollArea")
+        scroll_area.setFrameShape(QFrame.NoFrame)
+
+        scroll_area.viewport().setObjectName("scrollAreaViewport")
+
         scroll_content = QWidget()
+        scroll_content.setObjectName("scrollContent")
         self.list_layout = QVBoxLayout(scroll_content)
-        self.list_layout.setSpacing(10)
+        self.list_layout.setContentsMargins(20, 20, 20, 20)
+        self.list_layout.setSpacing(15)
         self.list_layout.addStretch()
         scroll_area.setWidget(scroll_content)
         main_layout.addWidget(scroll_area)
@@ -363,7 +357,6 @@ class ImageListDialog(BaseDialog):
         self.apply_stylesheet()
 
     def _apply_filters(self):
-        """Filters the list of assets based on the selected criteria."""
         filter_text = self.cloud_filter_combo.currentText()
 
         if filter_text == "All":
@@ -418,7 +411,6 @@ class ImageListDialog(BaseDialog):
             if item.widget():
                 item.widget().deleteLater()
 
-        # Clear "No results" message if it exists
         if self.list_layout.count() > 1 and isinstance(
             self.list_layout.itemAt(0).widget(), QLabel
         ):
@@ -527,7 +519,7 @@ class ImageListDialog(BaseDialog):
 
     def _handle_open_visual_requested(self, asset: RasterAsset):
         layer = self._load_raster_into_qgis(
-            asset.get_local_path("visual"), f"{asset.stac_id}_Visual"
+            asset, asset.get_local_path("visual"), f"{asset.stac_id}_Visual"
         )
         if layer:
             self.iface.mapCanvas().setExtent(layer.extent())
@@ -574,7 +566,7 @@ class ImageListDialog(BaseDialog):
         if style_dialog.exec_() == QDialog.Accepted:
             items = style_dialog.get_classification_items()
             layer = self._load_ndvi_into_qgis_layer(
-                asset.get_local_path("ndvi"), asset.stac_id, items
+                asset, asset.get_local_path("ndvi"), items
             )
             if layer:
                 self.iface.mapCanvas().setExtent(layer.extent())
@@ -583,7 +575,7 @@ class ImageListDialog(BaseDialog):
     def _handle_open_false_color_requested(self, asset: RasterAsset):
         path = asset.get_local_path("false_color")
         name = f"{asset.stac_id}_FalseColor"
-        layer = self._load_raster_into_qgis(path, name, is_false_color=True)
+        layer = self._load_raster_into_qgis(asset, path, name, is_false_color=True)
         if layer:
             self.iface.mapCanvas().setExtent(layer.extent())
             self.iface.mapCanvas().refresh()
@@ -616,6 +608,8 @@ class ImageListDialog(BaseDialog):
         save_path = reply.property("save_path")
         reply.property("file_handle").close()
 
+        item_widget = self._get_item_widget(stac_id)
+
         if reply.error() != QNetworkReply.NoError:
             ThemedMessageBox.show_message(
                 self,
@@ -625,18 +619,26 @@ class ImageListDialog(BaseDialog):
             )
             if os.path.exists(save_path):
                 os.remove(save_path)
-            if item_widget := self._get_item_widget(stac_id):
+            if item_widget:
                 item_widget.update_ui_based_on_local_files()
         else:
+            asset = next((a for a in self.all_assets if a.stac_id == stac_id), None)
+            if not asset:
+                reply.deleteLater()
+                return
+
             if band == "visual":
-                layer = self._load_raster_into_qgis(save_path, f"{stac_id}_Visual")
+                layer = self._load_raster_into_qgis(
+                    asset, save_path, f"{stac_id}_Visual"
+                )
                 if layer:
                     self.iface.mapCanvas().setExtent(layer.extent())
                     self.iface.mapCanvas().refresh()
-                if item_widget := self._get_item_widget(stac_id):
+                if item_widget:
                     item_widget.update_ui_based_on_local_files()
             else:
                 self._on_band_download_complete(stac_id, band, save_path)
+
         reply.deleteLater()
 
     def _on_band_download_complete(self, stac_id: str, band: str, save_path: str):
@@ -649,6 +651,12 @@ class ImageListDialog(BaseDialog):
             if asset:
                 self._calculate_ndvi_and_fc(asset, op["style"])
             del self.active_operations[stac_id]
+        # Only update UI for multi-band downloads when the *last* one is done
+        elif len(op["completed"]) < op["expected"]:
+            pass  # Wait for other bands to finish
+        else:
+            if item_widget := self._get_item_widget(stac_id):
+                item_widget.update_ui_based_on_local_files()
 
     def _calculate_ndvi_and_fc(self, asset: RasterAsset, style_items: list):
         red_path = asset.get_local_path("red")
@@ -684,13 +692,17 @@ class ImageListDialog(BaseDialog):
         )
 
         last_layer_extent = None
+        asset = next((a for a in self.all_assets if a.stac_id == stac_id), None)
+        if not asset:
+            return
+
         if ndvi_path:
-            layer = self._load_ndvi_into_qgis_layer(ndvi_path, stac_id, style_items)
+            layer = self._load_ndvi_into_qgis_layer(asset, ndvi_path, style_items)
             if layer:
                 last_layer_extent = layer.extent()
         if fc_path:
             layer = self._load_raster_into_qgis(
-                fc_path, f"{stac_id}_FalseColor", is_false_color=True
+                asset, fc_path, f"{stac_id}_FalseColor", is_false_color=True
             )
             if layer:
                 last_layer_extent = layer.extent()
@@ -714,7 +726,7 @@ class ImageListDialog(BaseDialog):
             item_widget.update_ui_based_on_local_files()
 
     def _load_raster_into_qgis(
-        self, path: str, name: str, is_false_color: bool = False
+        self, asset: RasterAsset, path: str, name: str, is_false_color: bool = False
     ) -> Optional[QgsRasterLayer]:
         layer = QgsRasterLayer(path, name)
         if not layer.isValid():
@@ -722,8 +734,19 @@ class ImageListDialog(BaseDialog):
                 self,
                 QMessageBox.Warning,
                 "Invalid Layer",
-                f"Failed to load layer: {path}",
+                f"Failed to load layer: {path}. The file might be corrupted. It will be deleted.",
             )
+            try:
+                os.remove(path)
+                if item_widget := self._get_item_widget(asset.stac_id):
+                    item_widget.update_ui_based_on_local_files()
+            except OSError as e:
+                ThemedMessageBox.show_message(
+                    self,
+                    QMessageBox.Critical,
+                    "Delete Failed",
+                    f"Could not delete corrupted file: {e}",
+                )
             return None
         if is_false_color:
             renderer = QgsMultiBandColorRenderer(layer.dataProvider(), 1, 2, 3)
@@ -734,16 +757,27 @@ class ImageListDialog(BaseDialog):
         return layer
 
     def _load_ndvi_into_qgis_layer(
-        self, ndvi_path: str, raster_id: str, classification_items: list
+        self, asset: RasterAsset, ndvi_path: str, classification_items: list
     ) -> Optional[QgsRasterLayer]:
-        layer = QgsRasterLayer(ndvi_path, f"{raster_id}_NDVI")
+        layer = QgsRasterLayer(ndvi_path, f"{asset.stac_id}_NDVI")
         if not layer.isValid():
             ThemedMessageBox.show_message(
                 self,
                 QMessageBox.Warning,
                 "Invalid Layer",
-                f"Failed to load NDVI layer from {ndvi_path}",
+                f"Failed to load NDVI layer from {ndvi_path}. The file might be corrupted. It will be deleted.",
             )
+            try:
+                os.remove(ndvi_path)
+                if item_widget := self._get_item_widget(asset.stac_id):
+                    item_widget.update_ui_based_on_local_files()
+            except OSError as e:
+                ThemedMessageBox.show_message(
+                    self,
+                    QMessageBox.Critical,
+                    "Delete Failed",
+                    f"Could not delete corrupted file: {e}",
+                )
             return None
 
         color_ramp = QgsColorRampShader()
@@ -770,17 +804,40 @@ class ImageListDialog(BaseDialog):
             #backButton:hover {{ text-decoration: underline; }}
             #minimizeButton, #maximizeButton, #closeButton {{ color: #274423; }}
             #minimizeButton:hover, #maximizeButton:hover, #closeButton:hover {{ background-color: #E9ECEF; }}
-            #scrollArea {{ border: none; background-color: transparent; }}
-            #rasterItem {{ background-color: white; border: 1px solid #DEE2E6; border-radius: 12px; }}
+            #rasterItem {{ 
+                background-color: #F8F9FA; 
+                border: none; 
+                border-radius: 12px; 
+            }}
             #rasterTitle {{ font-weight: bold; font-size: 16px; }}
             #rasterSubtitle {{ color: #808080; font-size: 14px; font-style: italic; }}
             #rasterCloud {{ font-weight: bold; color: #274423; font-size: 12px; }}
             #rasterStatus {{ font-weight: bold; font-size: 10px; }}
             #noResultsLabel {{ color: #808080; font-size: 16px; font-style: italic; padding: 40px; }}
-            #actionButton {{ background-color: white; color: #495057; border: 1px solid #DEE2E6; padding: 8px 12px; border-radius: 12px; font-weight: bold; }}
-            #actionButton:hover {{ background-color: #F8F9FA; }}
-            #actionButton[highlight="true"] {{ background-color: #2E4434; color: white; border: none; }}
-            #actionButton[highlight="true"]:hover {{ background-color: #3D5A43; }}
+            #actionButton {{ 
+                background-color: #F8F9FA; 
+                color: #495057; 
+                border: 1px solid #808080; 
+                padding: 8px 12px; 
+                border-radius: 12px; 
+                font-weight: bold; 
+            }}
+            #actionButton:hover {{ background-color: #F1F3F5; }}
+            #actionButton:disabled {{ background-color: #F1F3F5; color: #ADB5BD; }}
+            #actionButton[highlight="true"] {{ 
+                background-color: #5E765F;
+                color: white; 
+                border: none; 
+            }}
+            #actionButton[highlight="true"]:hover {{ background-color: #4A634B; }}
+            QScrollArea {{
+                border: none;
+                background-color: #F8F9FA;
+            }}
+            QScrollBar:vertical {{
+                border: none;
+                background-color: none;
+            }}
             #paginationButton {{ background-color: white; color: #274423; border: 1px solid #274423; padding: 8px 16px; border-radius: 12px; }}
             #paginationButton:disabled {{ background-color: #E9ECEF; color: #6C757D; border: 1px solid #CED4DA; }}
             #pageLabel {{ color: #274423; font-size: 14px; }}

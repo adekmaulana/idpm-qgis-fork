@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
+from qgis.core import Qgis, QgsMessageLog
 
 from ..config import Config
 
@@ -41,16 +42,43 @@ class RasterAsset:
 
     @staticmethod
     def _parse_date(date_str: str) -> Optional[datetime]:
-        """Safely parses an ISO format date string."""
+        """
+        Safely parses various ISO 8601 format date strings.
+        It tries multiple formats to handle variations from the API.
+        """
         if not date_str:
             return None
+
+        # List of possible formats to try, from most to least specific.
+        # Handles formats with and without timezone information or fractional seconds.
+        formats_to_try = [
+            "%Y-%m-%dT%H:%M:%S.%fZ",  # With 'Z' and microseconds
+            "%Y-%m-%dT%H:%M:%S%z",  # With timezone offset
+            "%Y-%m-%dT%H:%M:%S.%f",  # With microseconds, no timezone
+            "%Y-%m-%dT%H:%M:%S",  # No microseconds, no timezone
+        ]
+
+        # First, try Python's built-in, more general ISO parser
         try:
             # Handle 'Z' for UTC timezone info by replacing it
             if date_str.endswith("Z"):
                 date_str = date_str.replace("Z", "+00:00")
             return datetime.fromisoformat(date_str)
         except (ValueError, TypeError):
-            return None
+            # If fromisoformat fails, try our list of specific formats
+            for fmt in formats_to_try:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except (ValueError, TypeError):
+                    continue
+
+        # If all parsing attempts fail, log it and return None
+        QgsMessageLog.logMessage(
+            f"Could not parse date string: '{date_str}' with any known format.",
+            "IDPMPlugin",
+            Qgis.Warning,
+        )
+        return None
 
     def get_local_path(self, asset_type: str) -> str:
         """
