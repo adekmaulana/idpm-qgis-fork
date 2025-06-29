@@ -21,6 +21,7 @@ from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkRepl
 
 from ..config import Config
 from .base_dialog import BaseDialog
+from .themed_message_box import ThemedMessageBox
 
 
 class ProfileDialog(BaseDialog):
@@ -272,7 +273,9 @@ class ProfileDialog(BaseDialog):
                 self.profile_pic_label.setText("No picture")
 
         except json.JSONDecodeError:
-            QMessageBox.critical(self, "Error", "Failed to parse user profile.")
+            ThemedMessageBox.show_message(
+                self, QMessageBox.Critical, "Error", "Failed to parse user profile."
+            )
 
     def _on_profile_picture_loaded(self, reply: QNetworkReply):
         """Handles the response from the profile picture download."""

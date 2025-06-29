@@ -27,10 +27,9 @@ from qgis.core import Qgis, QgsMessageLog
 from ..config import Config
 from .base_dialog import BaseDialog
 from .profile import ProfileDialog
-
-# from .list_raster import ImageListDialog  <- This import is moved to prevent circular dependency
 from .loading import LoadingDialog
 from .custom_input_dialog import CustomInputDialog
+from .themed_message_box import ThemedMessageBox
 
 
 class ActionCard(QWidget):
@@ -92,26 +91,13 @@ class ActionCard(QWidget):
         main_layout.addStretch()
 
     def mousePressEvent(self, event: QMouseEvent):
-        """
-        Absorb the mouse press event to prevent the parent widget from
-        interpreting it as the start of a drag operation.
-        """
-        # By implementing this method and doing nothing, we effectively
-        # consume the event and stop it from propagating to the parent.
         pass
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        """
-        On mouse release, if the cursor is still inside the widget's bounds,
-        we emit our custom clicked signal.
-        """
         if self.rect().contains(event.pos()):
             self.clicked.emit()
 
     def paintEvent(self, event):
-        """
-        Ensures the widget background is painted correctly according to the stylesheet.
-        """
         opt = QStyleOption()
         opt.initFrom(self)
         painter = QPainter(self)
@@ -119,10 +105,6 @@ class ActionCard(QWidget):
 
 
 class MenuWidget(BaseDialog):
-    """
-    The main menu dialog for the plugin, styled to match the new theme.
-    """
-
     iface: QgisInterface
     parent: Optional[QWidget]
 
@@ -130,67 +112,48 @@ class MenuWidget(BaseDialog):
         super().__init__(parent)
         self.iface = iface
         self.network_manager = QNetworkAccessManager(self)
-
         self.image_list_dialog = None
         self.profile_dialog = None
         self.loading_dialog = None
         self.user_profile = {}
-
         self.main_bg_path = os.path.join(Config.ASSETS_PATH, "images", "menu_bg.jpg")
-
         self.init_menu_ui()
         self._load_and_apply_profile()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        # <<< FIX: Only process mouse events if no other modal dialog is active >>>
         active_modal = QApplication.activeModalWidget()
         if active_modal and active_modal != self:
             return
-
-        # If no other modal is active, proceed with the default behavior
         super().mousePressEvent(event)
 
     def init_menu_ui(self) -> None:
-        """Sets up the menu-specific UI components."""
         self.setWindowTitle("IDPM Menu")
-
         main_layout = QVBoxLayout(self.main_container)
         main_layout.setContentsMargins(30, 10, 30, 30)
-
         top_bar_layout = QHBoxLayout()
-
         self.profile_button = QPushButton("User")
         self.profile_button.setObjectName("profileButton")
-
         profile_icon_path = os.path.join(
             Config.ASSETS_PATH, "images", "default_profile.png"
         )
         if os.path.exists(profile_icon_path):
             self.profile_button.setIcon(QIcon(profile_icon_path))
-
         self.profile_button.setIconSize(QSize(32, 32))
         self.profile_button.setCursor(Qt.PointingHandCursor)
-
         profile_menu = QMenu(self)
         view_profile_action = profile_menu.addAction("View Profile")
         logout_action = profile_menu.addAction("Logout")
         self.profile_button.setMenu(profile_menu)
-
         view_profile_action.triggered.connect(self.open_profile_dialog)
         logout_action.triggered.connect(self.handle_logout)
-
         top_bar_layout.addWidget(self.profile_button)
         top_bar_layout.addStretch()
-
         controls_layout = self._create_window_controls()
         top_bar_layout.addLayout(controls_layout)
-
         main_layout.addLayout(top_bar_layout)
         main_layout.addStretch(1)
-
         content_layout = QVBoxLayout()
         content_layout.setAlignment(Qt.AlignCenter)
-
         logo_label = QLabel()
         logo_path = os.path.join(Config.ASSETS_PATH, "images", "klhk_logo.png")
         if os.path.exists(logo_path):
@@ -201,38 +164,31 @@ class MenuWidget(BaseDialog):
                 )
             )
         logo_label.setAlignment(Qt.AlignCenter)
-
         self.title_label = QLabel("Hi User")
         self.title_label.setObjectName("titleLabel")
         self.title_label.setFont(QFont("Montserrat", 22, QFont.Bold))
         self.title_label.setAlignment(Qt.AlignCenter)
-
         subtitle_label = QLabel("Kelola dan Jelajahi Data Geospasial Anda")
         subtitle_label.setObjectName("subtitleLabel")
         subtitle_label.setFont(QFont("Montserrat", 28, QFont.Bold))
         subtitle_label.setAlignment(Qt.AlignCenter)
-
         description_label = QLabel(
             "Jelajahi fitur untuk kelola dan analisis data spasial"
         )
         description_label.setObjectName("descriptionLabel")
         description_label.setFont(QFont("Montserrat", 12))
         description_label.setAlignment(Qt.AlignCenter)
-
         content_layout.addWidget(logo_label)
         content_layout.addWidget(self.title_label)
         content_layout.addWidget(subtitle_label)
         content_layout.addWidget(description_label)
-
         button_container = QWidget()
         button_layout = QHBoxLayout(button_container)
         button_layout.setSpacing(20)
         button_layout.setContentsMargins(0, 30, 0, 0)
-
         icon_path_raster = os.path.join(Config.ASSETS_PATH, "images", "image.svg")
         icon_path_potensi = os.path.join(Config.ASSETS_PATH, "images", "maps.svg")
         icon_path_existing = os.path.join(Config.ASSETS_PATH, "images", "world.svg")
-
         self.card_list_raster = ActionCard(
             icon_path_raster, "List Raster", "View Detail"
         )
@@ -242,18 +198,13 @@ class MenuWidget(BaseDialog):
         self.card_open_existing = ActionCard(
             icon_path_existing, "Open Data Existing", "View Detail"
         )
-
         self.card_list_raster.clicked.connect(self.open_image_list)
-
         button_layout.addWidget(self.card_list_raster)
         button_layout.addWidget(self.card_open_potensi)
         button_layout.addWidget(self.card_open_existing)
-
         content_layout.addWidget(button_container)
-
         main_layout.addLayout(content_layout)
         main_layout.addStretch(2)
-
         self.apply_stylesheet()
 
     def _load_and_apply_profile(self):
@@ -264,15 +215,12 @@ class MenuWidget(BaseDialog):
                 "Could not find user profile in settings.", "IDPMPlugin", Qgis.Warning
             )
             return
-
         try:
             self.user_profile = json.loads(profile_json_str)
             username = self.user_profile.get("username", "User")
             roles = self.user_profile.get("roles", "User")
-
             self.title_label.setText(f"Hi {username}")
             self.profile_button.setText(roles)
-
         except json.JSONDecodeError:
             QgsMessageLog.logMessage(
                 "Failed to parse user profile from settings.",
@@ -283,7 +231,6 @@ class MenuWidget(BaseDialog):
     def open_profile_dialog(self):
         if self.profile_dialog is None:
             self.profile_dialog = ProfileDialog(self.iface, self)
-
         saved_pos = self.pos()
         self.hide()
         self.profile_dialog.exec_()
@@ -291,13 +238,15 @@ class MenuWidget(BaseDialog):
         self.show()
 
     def handle_logout(self):
-        confirm = QMessageBox.question(
-            self,
-            "Confirm Logout",
-            "Are you sure you want to log out?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+        confirm = ThemedMessageBox.show_message(
+            parent=self,
+            icon=QMessageBox.Question,
+            title="Confirm Logout",
+            text="Are you sure you want to log out?",
+            buttons=QMessageBox.Yes | QMessageBox.No,
+            default_button=QMessageBox.No,
         )
+
         if confirm == QMessageBox.Yes:
             settings = QSettings()
             settings.remove("IDPMPlugin/token")
@@ -307,7 +256,9 @@ class MenuWidget(BaseDialog):
 
     def open_image_list(self, event=None):
         if not self.user_profile:
-            QMessageBox.critical(self, "Error", "User profile not loaded.")
+            ThemedMessageBox.show_message(
+                self, QMessageBox.Critical, "Error", "User profile not loaded."
+            )
             return
 
         selected_wilker = None
@@ -316,13 +267,14 @@ class MenuWidget(BaseDialog):
             wilker_list = sorted(
                 [w.strip() for w in wilker_str.split(",") if w.strip()]
             )
-
             if not wilker_list:
-                QMessageBox.warning(
-                    self, "No Working Area", "No valid working area found."
+                ThemedMessageBox.show_message(
+                    self,
+                    QMessageBox.Warning,
+                    "No Working Area",
+                    "No valid working area found.",
                 )
                 return
-
             if len(wilker_list) == 1:
                 selected_wilker = wilker_list[0]
             else:
@@ -336,10 +288,12 @@ class MenuWidget(BaseDialog):
                     selected_wilker = dialog.selectedItem()
                 else:
                     return
-
         except Exception as e:
-            QMessageBox.critical(
-                self, "Profile Error", f"Could not read user profile: {e}"
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Profile Error",
+                f"Could not read user profile: {e}",
             )
             return
 
@@ -349,29 +303,31 @@ class MenuWidget(BaseDialog):
         settings = QSettings()
         token = settings.value("IDPMPlugin/token", None)
         if not token:
-            QMessageBox.critical(self, "Authentication Error", "You are not logged in.")
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Authentication Error",
+                "You are not logged in.",
+            )
             return
 
         if self.loading_dialog is None:
             self.loading_dialog = LoadingDialog(self)
 
-        self.setEnabled(False)  # Disable the menu
+        self.setEnabled(False)
         self.loading_dialog.show()
 
         request = QNetworkRequest(
             QUrl(f"{Config.API_URL}/geoportal/sentinel/catalog/{selected_wilker}")
         )
         request.setRawHeader(b"Authorization", f"Bearer {token}".encode())
-
         self.network_manager.finished.connect(self.handle_image_list_response)
         self.network_manager.get(request)
 
     def handle_image_list_response(self, reply: QNetworkReply):
-        from .list_raster import (
-            ImageListDialog,
-        )  # Local import to fix circular dependency
+        from .list_raster import ImageListDialog
 
-        self.setEnabled(True)  # Re-enable the menu
+        self.setEnabled(True)
         if self.loading_dialog:
             self.loading_dialog.close()
             self.loading_dialog.deleteLater()
@@ -383,8 +339,11 @@ class MenuWidget(BaseDialog):
             pass
 
         if reply.error():
-            QMessageBox.critical(
-                self, "Error", f"Failed to fetch image list: {reply.errorString()}"
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Error",
+                f"Failed to fetch image list: {reply.errorString()}",
             )
             reply.deleteLater()
             return
@@ -395,35 +354,38 @@ class MenuWidget(BaseDialog):
         try:
             response = json.loads(response_data.data().decode("utf-8"))
             features = response.get("data", {}).get("features", [])
-
             if self.image_list_dialog:
                 self.image_list_dialog.close()
-
             self.image_list_dialog = ImageListDialog(features, self.iface, parent=self)
-
             saved_pos = self.pos()
             self.hide()
             self.image_list_dialog.exec_()
             self.move(saved_pos)
             self.show()
-
         except json.JSONDecodeError:
-            QMessageBox.critical(self, "Error", "Invalid JSON response for image list.")
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Error",
+                "Invalid JSON response for image list.",
+            )
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {e}")
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Error",
+                f"An unexpected error occurred: {e}",
+            )
 
     def apply_stylesheet(self) -> None:
-        """Applies the QSS to style the dialog."""
         arrow_icon_path = os.path.join(
             Config.ASSETS_PATH, "images", "arrow-down.svg"
         ).replace("\\", "/")
-
         bg_path = (
             self.main_bg_path.replace("\\", "/")
             if os.path.exists(self.main_bg_path)
             else ""
         )
-
         qss = f"""
             QDialog {{ background-color: transparent; }}
             #mainContainer {{
@@ -438,9 +400,7 @@ class MenuWidget(BaseDialog):
             
             #minimizeButton, #maximizeButton, #closeButton {{
                 background-color: transparent; color: white; border: none;
-                font-family: "Arial", sans-serif;
-                font-weight: bold;
-                border-radius: 4px;
+                font-family: "Arial", sans-serif; font-weight: bold; border-radius: 4px;
             }}
             #minimizeButton {{ font-size: 16px; padding-bottom: 5px; }}
             #maximizeButton {{ font-size: 16px; padding-top: 1px; }}
@@ -457,41 +417,23 @@ class MenuWidget(BaseDialog):
             #profileButton:hover {{ background-color: rgba(255, 255, 255, 0.1); }}
             #profileButton::menu-indicator {{
                 image: url({arrow_icon_path});
-                width: 20px;
-                height: 20px;
-                subcontrol-position: center right;
-                subcontrol-origin: padding;
-                right: 15px;
+                width: 20px; height: 20px;
+                subcontrol-position: center right; subcontrol-origin: padding; right: 15px;
             }}
-
             QMenu {{
-                background-color: #5E765F;
-                color: white;
+                background-color: #5E765F; color: white;
                 border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                padding: 5px;
+                border-radius: 8px; padding: 5px;
             }}
-            QMenu::item {{
-                padding: 8px 20px;
-                border-radius: 4px;
-            }}
-            QMenu::item:selected {{
-                background-color: rgba(255, 255, 255, 0.15);
-            }}
-            QMenu::separator {{
-                height: 1px;
-                background: rgba(255, 255, 255, 0.2);
-                margin: 5px 0px;
-            }}
-
+            QMenu::item {{ padding: 8px 20px; border-radius: 4px; }}
+            QMenu::item:selected {{ background-color: rgba(255, 255, 255, 0.15); }}
+            QMenu::separator {{ height: 1px; background: rgba(255, 255, 255, 0.2); margin: 5px 0px; }}
             #actionCard {{
                 background-color: rgba(255, 255, 255, 0.2);
                 border: 1px solid rgba(255, 255, 255, 0.4);
                 border-radius: 12px;
             }}
-            #actionCard:hover {{
-                background-color: rgba(255, 255, 255, 0.25);
-            }}
+            #actionCard:hover {{ background-color: rgba(255, 255, 255, 0.25); }}
             #cardTitle {{ font-size: 14px; font-weight: bold; }}
             #cardSubtitle {{ color: #D0D0D0; font-size: 11px;}}
         """

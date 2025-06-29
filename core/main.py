@@ -8,7 +8,7 @@ from qgis.core import Qgis, QgsMessageLog
 from qgis.gui import QgisInterface
 
 from ..config import Config
-from ..ui import LoginWidget, MenuWidget  # <<< CHANGED: Import MenuWidget
+from ..ui import LoginWidget, MenuWidget, ThemedMessageBox
 
 
 class IDPMPlugin:
@@ -113,8 +113,9 @@ class IDPMPlugin:
             QgsMessageLog.logMessage(
                 "Creating new MenuWidget (singleton).", "IDPMPlugin", Qgis.Info
             )
-            # <<< CHANGED: Use MenuWidget instead of MenuDialog
-            self._menu_dialog_instance = MenuWidget(iface=self.iface, parent=None)
+            self._menu_dialog_instance = MenuWidget(
+                iface=self.iface, parent=self.iface.mainWindow()
+            )
             self._menu_dialog_instance.finished.connect(self._handle_menu_dialog_closed)
             self._menu_dialog_instance.show()
         else:
@@ -160,8 +161,9 @@ class IDPMPlugin:
 
         try:
             if reply.error():
-                QMessageBox.critical(
+                ThemedMessageBox.show_message(
                     self.iface.mainWindow(),
+                    QMessageBox.Critical,
                     "Network Error",
                     f"Failed to fetch form token: {reply.errorString()}",
                 )
@@ -169,8 +171,9 @@ class IDPMPlugin:
             else:
                 response_data = reply.readAll()
                 if not response_data:
-                    QMessageBox.critical(
+                    ThemedMessageBox.show_message(
                         self.iface.mainWindow(),
+                        QMessageBox.Critical,
                         "Error",
                         "Empty response for form token.",
                     )
@@ -178,8 +181,9 @@ class IDPMPlugin:
                 else:
                     response = json.loads(response_data.data().decode("utf-8"))
                     if response.get("status", True) is False:
-                        QMessageBox.critical(
+                        ThemedMessageBox.show_message(
                             self.iface.mainWindow(),
+                            QMessageBox.Critical,
                             "API Error",
                             f"Failed to fetch form token: {response.get('msg', 'Unknown error')}",
                         )
@@ -187,22 +191,25 @@ class IDPMPlugin:
                     else:
                         form_token = response.get("token")
                         if not form_token:
-                            QMessageBox.critical(
+                            ThemedMessageBox.show_message(
                                 self.iface.mainWindow(),
+                                QMessageBox.Critical,
                                 "API Error",
                                 "No form token in response.",
                             )
                             error_occurred = True
         except json.JSONDecodeError:
-            QMessageBox.critical(
+            ThemedMessageBox.show_message(
                 self.iface.mainWindow(),
+                QMessageBox.Critical,
                 "Error",
                 "Invalid JSON response for form token.",
             )
             error_occurred = True
         except Exception as e:
-            QMessageBox.critical(
+            ThemedMessageBox.show_message(
                 self.iface.mainWindow(),
+                QMessageBox.Critical,
                 "Error",
                 f"An error occurred processing form token: {str(e)}",
             )
@@ -224,7 +231,7 @@ class IDPMPlugin:
         self.login_dialog_instance = LoginWidget(
             form_token=form_token,
             iface=self.iface,
-            parent=None,
+            parent=self.iface.mainWindow(),
         )
         self.login_dialog_instance.finished.connect(self.handle_login_dialog_closed)
         self.login_dialog_instance.show()

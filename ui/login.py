@@ -22,6 +22,7 @@ from qgis.core import Qgis, QgsMessageLog
 
 from ..config import Config
 from .base_dialog import BaseDialog
+from .themed_message_box import ThemedMessageBox
 
 
 class LoginWidget(BaseDialog):
@@ -87,7 +88,12 @@ class LoginWidget(BaseDialog):
         password = self.password_input.text()
 
         if not email or not password:
-            QMessageBox.warning(self, "Input Error", "Email and password are required.")
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Warning,
+                "Input Error",
+                "Email and password are required.",
+            )
             return
 
         payload = json.dumps(
@@ -115,8 +121,11 @@ class LoginWidget(BaseDialog):
             pass
 
         if reply.error():
-            QMessageBox.critical(
-                self, "Network Error", f"Login request failed: {reply.errorString()}"
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Network Error",
+                f"Login request failed: {reply.errorString()}",
             )
             reply.deleteLater()
             return
@@ -126,21 +135,21 @@ class LoginWidget(BaseDialog):
 
         try:
             response_json = json.loads(response_data.data().decode("utf-8"))
-            print(f"Login response: {response_json}")  # Debug log
             if not response_json.get("status"):
                 error_msg = response_json.get(
                     "msg", "Invalid credentials or unknown error."
                 )
-                QMessageBox.warning(self, "Login Failed", error_msg)
+                ThemedMessageBox.show_message(
+                    self, QMessageBox.Warning, "Login Failed", error_msg
+                )
             else:
                 api_token = response_json.get("token")
-                user_profile = response_json.get("profile")  # <<< ADD: Get profile data
+                user_profile = response_json.get("profile")
 
                 if api_token:
                     settings = QSettings()
                     settings.setValue("IDPMPlugin/token", api_token)
 
-                    # --- ADD: Save user profile ---
                     if user_profile and isinstance(user_profile, dict):
                         settings.setValue(
                             "IDPMPlugin/user_profile", json.dumps(user_profile)
@@ -149,53 +158,53 @@ class LoginWidget(BaseDialog):
                             "User profile saved.", "IDPMPlugin", Qgis.Info
                         )
                     else:
-                        # Ensure old profile is cleared if none is provided
                         settings.remove("IDPMPlugin/user_profile")
                         QgsMessageLog.logMessage(
                             "No user profile in response.", "IDPMPlugin", Qgis.Warning
                         )
-                    # --- END ADD ---
 
-                    QMessageBox.information(self, "Success", "Login successful!")
+                    ThemedMessageBox.show_message(
+                        self, QMessageBox.Information, "Success", "Login successful!"
+                    )
                     self.accept()
                 else:
-                    QMessageBox.critical(
-                        self, "API Error", "Login succeeded but no token was provided."
+                    ThemedMessageBox.show_message(
+                        self,
+                        QMessageBox.Critical,
+                        "API Error",
+                        "Login succeeded but no token was provided.",
                     )
         except (json.JSONDecodeError, Exception) as e:
-            QMessageBox.critical(
-                self, "Error", f"An error occurred processing the response: {e}"
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Error",
+                f"An error occurred processing the response: {e}",
             )
 
     def _create_left_panel(self) -> QWidget:
-        """Creates the scaled left-side panel."""
         panel = QWidget()
         panel.setObjectName("leftPanel")
         overlay = QWidget(panel)
         overlay.setObjectName("leftPanelOverlay")
-
         margin = 40
         content_layout = QVBoxLayout(overlay)
         content_layout.setContentsMargins(margin, margin, margin, margin)
         content_layout.setSpacing(20)
-
         welcome_label = QLabel("Welcome Back")
         welcome_label.setObjectName("welcomeLabel")
         welcome_label.setFont(QFont("Montserrat", 12, QFont.Thin))
-
         title_label = QLabel(
             "Inovasi Geospasial Untuk Mendukung Pengelolaan Hutan Lingkungan"
         )
         title_label.setObjectName("titleLabel")
         title_label.setFont(QFont("Montserrat", 24, QFont.Bold))
         title_label.setWordWrap(True)
-
         logos_widget = QWidget()
         logos_layout = QHBoxLayout(logos_widget)
         logos_layout.setContentsMargins(0, 20, 0, 0)
         logos_layout.setSpacing(12)
         logos_layout.setAlignment(Qt.AlignLeft)
-
         logo_paths = [self.logo1_path, self.logo2_path]
         logo_size = 60
         for i, path in enumerate(logo_paths):
@@ -217,7 +226,6 @@ class LoginWidget(BaseDialog):
                     f"background-color: #DDD; border: 1px solid #AAA; border-radius: 5px;"
                 )
             logos_layout.addWidget(label)
-
         label = QLabel()
         if os.path.exists(self.logo3_path):
             pixmap = QPixmap(self.logo3_path)
@@ -235,7 +243,6 @@ class LoginWidget(BaseDialog):
             )
         logos_layout.addWidget(label)
         logos_layout.addStretch()
-
         logo4_label = QLabel()
         logo4_label.setAlignment(Qt.AlignLeft)
         if os.path.exists(self.logo4_path):
@@ -248,77 +255,58 @@ class LoginWidget(BaseDialog):
             logo4_label.setStyleSheet(
                 f"background-color: #DDD; border: 1px solid #AAA; border-radius: 5px;"
             )
-
         v_spacer = QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
-
         content_layout.addWidget(welcome_label)
         content_layout.addWidget(title_label)
         content_layout.addWidget(logos_widget)
         content_layout.addWidget(logo4_label)
         content_layout.addSpacerItem(v_spacer)
-
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(margin, margin, margin, margin)
         panel_layout.addStretch(1)
         panel_layout.addWidget(overlay)
         panel_layout.addStretch(1)
-
         return panel
 
     def _create_right_panel(self) -> QWidget:
-        """Creates the scaled right-side panel with window controls."""
         panel = QWidget()
         panel.setObjectName("rightPanel")
-
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(20, 10, 20, 20)
-
-        # Get the window controls from the base class
         controls_layout = self._create_window_controls()
-
-        # --- Centered form ---
         form_container_layout = QVBoxLayout()
         form_container_layout.setAlignment(Qt.AlignCenter)
-
         form_widget = QWidget()
         form_layout = QVBoxLayout(form_widget)
         form_layout.setSpacing(20)
         form_layout.setContentsMargins(0, 0, 0, 0)
         form_widget.setMaximumWidth(450)
-
         header_label = QLabel("Enter your username and password.")
         header_label.setObjectName("headerLabel")
         header_label.setFont(QFont("Montserrat", 14, QFont.Bold))
-
         sub_header_label = QLabel("Please log in to continue spatial data processing.")
         sub_header_label.setObjectName("subHeaderLabel")
         sub_header_label.setFont(QFont("Montserrat", 12))
         sub_header_label.setWordWrap(True)
-
         self.email_input = QLineEdit()
         self.email_input.setPlaceholderText("E-mail Address")
         self.email_input.setFont(QFont("Montserrat", 11))
-
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Password")
         self.password_input.setFont(QFont("Montserrat", 11))
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.returnPressed.connect(self._attempt_login)
-
         buttons_widget = QWidget()
         buttons_layout = QHBoxLayout(buttons_widget)
         buttons_layout.setContentsMargins(0, 15, 0, 0)
         buttons_layout.setSpacing(15)
-
         self.login_button = QPushButton("Login")
         self.login_button.setObjectName("loginButton")
         self.login_button.setFont(QFont("Montserrat", 11, QFont.Bold))
         self.login_button.setCursor(Qt.PointingHandCursor)
         self.login_button.clicked.connect(self._attempt_login)
-
         buttons_layout.addWidget(self.login_button)
         buttons_layout.addStretch()
-
         form_layout.addWidget(header_label)
         form_layout.addWidget(sub_header_label)
         form_layout.addSpacerItem(
@@ -327,24 +315,19 @@ class LoginWidget(BaseDialog):
         form_layout.addWidget(self.email_input)
         form_layout.addWidget(self.password_input)
         form_layout.addWidget(buttons_widget)
-
         form_container_layout.addWidget(form_widget)
-
         panel_layout.addLayout(controls_layout)
         panel_layout.addStretch(1)
         panel_layout.addLayout(form_container_layout)
         panel_layout.addStretch(2)
-
         return panel
 
     def apply_stylesheet(self) -> None:
-        """Applies the scaled QSS to style the dialog."""
         bg_path = (
             self.background_img_path.replace("\\", "/")
             if os.path.exists(self.background_img_path)
             else ""
         )
-
         qss = f"""
             QDialog {{ background-color: transparent; }}
             #mainContainer {{
@@ -401,24 +384,5 @@ class LoginWidget(BaseDialog):
             }}
             #loginButton:hover {{ background-color: #E8E8E8; }}
             #loginButton:disabled {{ background-color: #B0B0B0; }}
-
-            /* --- Style for QMessageBox --- */
-            QMessageBox {{
-                background-color: #3D5A43;
-            }}
-            QMessageBox QLabel {{
-                color: white;
-                font-size: 14px;
-            }}
-            QMessageBox QPushButton {{
-                background-color: white;
-                color: #222222;
-                border-radius: 4px;
-                padding: 8px 16px;
-                min-width: 80px;
-            }}
-            QMessageBox QPushButton:hover {{
-                background-color: #E8E8E8;
-            }}
         """
         self.setStyleSheet(qss)

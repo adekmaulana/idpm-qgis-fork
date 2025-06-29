@@ -44,30 +44,28 @@ from ..config import Config
 from .base_dialog import BaseDialog
 from .ndvi_style_dialog import NdviStyleDialog
 from ..core import NdvITask, RasterAsset
+from .themed_message_box import ThemedMessageBox
+
 
 PLUGIN_LAYER_GROUP_NAME = "IDPM Layers"
 
 
 class RoundedImageLabel(QLabel):
-    """A QLabel that displays a pixmap with rounded corners and a placeholder."""
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pixmap = QPixmap()
         self.radius = 8
-        self.placeholder_color = QColor(0, 0, 0, 51)  # 20% opaque black
+        self.placeholder_color = QColor(0, 0, 0, 51)
 
     def setPixmap(self, pixmap: QPixmap):
         self._pixmap = pixmap
-        self.update()  # Trigger a repaint
+        self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-
         path = QPainterPath()
         path.addRoundedRect(QRectF(self.rect()), self.radius, self.radius)
-
         if self._pixmap.isNull():
             painter.fillPath(path, QBrush(self.placeholder_color))
         else:
@@ -81,8 +79,6 @@ class RoundedImageLabel(QLabel):
 
 
 class RasterItemWidget(QWidget):
-    """A custom widget to display a single raster item in the list."""
-
     downloadVisualRequested = pyqtSignal(RasterAsset)
     openVisualRequested = pyqtSignal(RasterAsset)
     processNdviRequested = pyqtSignal(RasterAsset, list)
@@ -94,82 +90,60 @@ class RasterItemWidget(QWidget):
         self.asset = asset
         self.setObjectName("rasterItem")
         self.setAutoFillBackground(True)
-
         self.network_manager = QNetworkAccessManager(self)
         self.network_manager.finished.connect(self._handle_thumbnail_loaded)
-
         self.downloaded_bands = {}
-
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(15)
-
-        # Thumbnail
         self.thumb_label = RoundedImageLabel()
         self.thumb_label.setFixedSize(202, 148)
         main_layout.addWidget(self.thumb_label)
         self.load_thumbnail()
-
-        # Details Layout
         details_layout = QVBoxLayout()
         details_layout.setSpacing(4)
-
         self.stac_id_label = QLabel(self.asset.stac_id)
         self.stac_id_label.setObjectName("rasterTitle")
-
         date_str = "N/A"
         if self.asset.capture_date:
             date_str = self.asset.capture_date.strftime("%d %b %Y %H:%M:%S")
         published_label = QLabel(f"Published on: {date_str}")
         published_label.setObjectName("rasterSubtitle")
-
         cloud_label = QLabel(f"Cloud Cover: {self.asset.cloud_cover:.2f}%")
         cloud_label.setObjectName("rasterCloud")
-
         details_layout.addWidget(self.stac_id_label)
         details_layout.addStretch(1)
         details_layout.addWidget(published_label)
         details_layout.addStretch(1)
         details_layout.addWidget(cloud_label)
         details_layout.addStretch(2)
-
         main_layout.addLayout(details_layout)
         main_layout.addStretch()
-
         right_column_layout = self._create_actions_layout()
         main_layout.addLayout(right_column_layout)
-
         self.update_ui_based_on_local_files()
 
     def _create_actions_layout(self) -> QVBoxLayout:
         layout = QVBoxLayout()
         layout.setSpacing(10)
         layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
         buttons_layout = QHBoxLayout()
         buttons_layout.setSpacing(10)
-
         self.btn_visual = QPushButton()
         self.btn_visual.setObjectName("actionButton")
         self.btn_visual.clicked.connect(self._on_visual_button_clicked)
         buttons_layout.addWidget(self.btn_visual)
-
         self.btn_ndvi = QPushButton()
         self.btn_ndvi.setObjectName("actionButton")
         self.btn_ndvi.clicked.connect(self._on_ndvi_button_clicked)
         buttons_layout.addWidget(self.btn_ndvi)
-
-        # Add False Color Button
         self.btn_false_color = QPushButton("Open False Color")
         self.btn_false_color.setObjectName("actionButton")
         self.btn_false_color.clicked.connect(self._on_false_color_button_clicked)
         buttons_layout.addWidget(self.btn_false_color)
-
         layout.addLayout(buttons_layout)
-
         self.progress_bar_visual = self._create_progress_bar()
         layout.addWidget(self.progress_bar_visual)
-
         ndvi_progress_layout = QHBoxLayout()
         self.progress_bar_nir = self._create_progress_bar()
         self.progress_bar_red = self._create_progress_bar()
@@ -178,14 +152,12 @@ class RasterItemWidget(QWidget):
         ndvi_progress_layout.addWidget(self.progress_bar_red)
         ndvi_progress_layout.addWidget(self.progress_bar_green)
         layout.addLayout(ndvi_progress_layout)
-
         self.status_label = QLabel("")
         self.status_label.setObjectName("rasterStatus")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setWordWrap(True)
         self.status_label.setVisible(False)
         layout.addWidget(self.status_label)
-
         return layout
 
     def _create_progress_bar(self) -> QProgressBar:
@@ -274,14 +246,7 @@ class RasterItemWidget(QWidget):
             self.btn_ndvi.setText("Open NDVI")
             self.btn_ndvi.setProperty("highlight", False)
         else:
-            if self.asset.green_url and self.asset.nir_url and self.asset.red_url:
-                self.btn_ndvi.setText("Process NDVI / False Color")
-            elif not self.asset.green_url:
-                self.btn_ndvi.setText("Process NDVI")
-            else:
-                self.btn_ndvi.setText("Not enough data for NDVI")
-                self.btn_ndvi.setEnabled(False)
-
+            self.btn_ndvi.setText("Process NDVI & False Color")
             self.btn_ndvi.setProperty("highlight", True)
 
         fc_path = self.asset.get_local_path("false_color")
@@ -321,7 +286,6 @@ class ImageListDialog(BaseDialog):
         self.active_operations: Dict[str, Any] = {}
         self.current_page = 1
         self.items_per_page = 5
-
         self.init_list_ui()
         self.update_list_and_pagination()
         self.add_basemap_global_osm(self.iface)
@@ -388,12 +352,10 @@ class ImageListDialog(BaseDialog):
             item = self.list_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-
         start_index = (self.current_page - 1) * self.items_per_page
         paginated_assets = self.all_assets[
             start_index : start_index + self.items_per_page
         ]
-
         for asset in paginated_assets:
             item_widget = RasterItemWidget(asset, self)
             item_widget.downloadVisualRequested.connect(
@@ -408,7 +370,6 @@ class ImageListDialog(BaseDialog):
                 self._handle_open_false_color_requested
             )
             self.list_layout.insertWidget(self.list_layout.count() - 1, item_widget)
-
         total_pages = (
             len(self.all_assets) + self.items_per_page - 1
         ) // self.items_per_page
@@ -440,31 +401,21 @@ class ImageListDialog(BaseDialog):
         return group_node
 
     def add_basemap_global_osm(self, iface: QgisInterface):
-        """
-        Ensures the OpenStreetMap basemap is present in the project,
-        without changing the current map extent.
-        """
         layer_name = "OpenStreetMap (IDPM Basemap)"
-        # Check if the layer already exists
         if not QgsProject.instance().mapLayersByName(layer_name):
-            # If not, create and add it
             url = "type=xyz&url=https://a.tile.openstreetmap.org/{z}/{x}/{y}.png&zmax=19&zmin=0"
             layer = QgsRasterLayer(url, layer_name, "wms")
             if layer.isValid():
                 QgsProject.instance().addMapLayer(layer, False)
                 if group := self.get_or_create_plugin_layer_group():
                     group.addLayer(layer)
-
-        # We no longer set the extent here. The extent will be set when a
-        # specific raster layer is loaded, focusing on its AOI.
-        # Set extent to Indonesia initially
         if not any(
             layer.name().endswith(("_Visual", "_NDVI", "_FalseColor"))
             for layer in QgsProject.instance().mapLayers().values()
         ):
             indonesia_bbox = QgsRectangle(95.0, -11.0, 141.0, 6.0)
-            dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")  # OSM CRS
-            source_crs = QgsCoordinateReferenceSystem("EPSG:4326")  # WGS 84
+            dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")
+            source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
             transform = QgsCoordinateTransform(
                 source_crs, dest_crs, QgsProject.instance()
             )
@@ -481,8 +432,11 @@ class ImageListDialog(BaseDialog):
 
     def _handle_download_visual_requested(self, asset: RasterAsset):
         if not asset.visual_url:
-            QMessageBox.warning(
-                self, "Missing Asset", f"No 'visual' asset found for {asset.stac_id}."
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Warning,
+                "Missing Asset",
+                f"No 'visual' asset found for {asset.stac_id}.",
             )
             if item_widget := self._get_item_widget(asset.stac_id):
                 item_widget.update_ui_based_on_local_files()
@@ -492,9 +446,12 @@ class ImageListDialog(BaseDialog):
         )
 
     def _handle_open_visual_requested(self, asset: RasterAsset):
-        self._load_raster_into_qgis(
+        layer = self._load_raster_into_qgis(
             asset.get_local_path("visual"), f"{asset.stac_id}_Visual"
         )
+        if layer:
+            self.iface.mapCanvas().setExtent(layer.extent())
+            self.iface.mapCanvas().refresh()
 
     def _handle_process_ndvi_requested(
         self, asset: RasterAsset, classification_items: list
@@ -511,8 +468,9 @@ class ImageListDialog(BaseDialog):
             )
 
         if "nir" not in bands_to_download or "red" not in bands_to_download:
-            QMessageBox.warning(
+            ThemedMessageBox.show_message(
                 self,
+                QMessageBox.Warning,
                 "Missing Assets",
                 f"NIR or Red bands not found for {asset.stac_id}.",
             )
@@ -525,7 +483,6 @@ class ImageListDialog(BaseDialog):
             "completed": {},
             "style": classification_items,
         }
-
         for band_type, (url, save_path) in bands_to_download.items():
             if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
                 self._on_band_download_complete(asset.stac_id, band_type, save_path)
@@ -536,14 +493,20 @@ class ImageListDialog(BaseDialog):
         style_dialog = NdviStyleDialog(self)
         if style_dialog.exec_() == QDialog.Accepted:
             items = style_dialog.get_classification_items()
-            self._load_ndvi_into_qgis_layer(
+            layer = self._load_ndvi_into_qgis_layer(
                 asset.get_local_path("ndvi"), asset.stac_id, items
             )
+            if layer:
+                self.iface.mapCanvas().setExtent(layer.extent())
+                self.iface.mapCanvas().refresh()
 
     def _handle_open_false_color_requested(self, asset: RasterAsset):
         path = asset.get_local_path("false_color")
         name = f"{asset.stac_id}_FalseColor"
-        self._load_raster_into_qgis(path, name, is_false_color=True)
+        layer = self._load_raster_into_qgis(path, name, is_false_color=True)
+        if layer:
+            self.iface.mapCanvas().setExtent(layer.extent())
+            self.iface.mapCanvas().refresh()
 
     def _start_download(self, asset: RasterAsset, band: str, url: str, save_path: str):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -574,8 +537,9 @@ class ImageListDialog(BaseDialog):
         reply.property("file_handle").close()
 
         if reply.error() != QNetworkReply.NoError:
-            QMessageBox.critical(
+            ThemedMessageBox.show_message(
                 self,
+                QMessageBox.Critical,
                 "Download Failed",
                 f"Failed to download {band} for {stac_id}: {reply.errorString()}",
             )
@@ -585,7 +549,10 @@ class ImageListDialog(BaseDialog):
                 item_widget.update_ui_based_on_local_files()
         else:
             if band == "visual":
-                self._load_raster_into_qgis(save_path, f"{stac_id}_Visual")
+                layer = self._load_raster_into_qgis(save_path, f"{stac_id}_Visual")
+                if layer:
+                    self.iface.mapCanvas().setExtent(layer.extent())
+                    self.iface.mapCanvas().refresh()
                 if item_widget := self._get_item_widget(stac_id):
                     item_widget.update_ui_based_on_local_files()
             else:
@@ -596,7 +563,6 @@ class ImageListDialog(BaseDialog):
         op = self.active_operations.get(stac_id)
         if not op:
             return
-
         op["completed"][band] = save_path
         if len(op["completed"]) == op["expected"]:
             asset = next((a for a in self.all_assets if a.stac_id == stac_id), None)
@@ -630,8 +596,11 @@ class ImageListDialog(BaseDialog):
         self, ndvi_path: str, fc_path: str, stac_id: str, style_items: list
     ):
         QgsApplication.taskManager().allTasksFinished.emit()
-        QMessageBox.information(
-            self, "Processing Complete", f"NDVI and False Color created for {stac_id}."
+        ThemedMessageBox.show_message(
+            self,
+            QMessageBox.Information,
+            "Processing Complete",
+            f"NDVI and False Color created for {stac_id}.",
         )
 
         last_layer_extent = None
@@ -655,8 +624,11 @@ class ImageListDialog(BaseDialog):
 
     def _on_task_error(self, error_msg: str, stac_id: str):
         QgsApplication.taskManager().allTasksFinished.emit()
-        QMessageBox.critical(
-            self, "Error", f"Failed to process rasters for {stac_id}: {error_msg}"
+        ThemedMessageBox.show_message(
+            self,
+            QMessageBox.Critical,
+            "Error",
+            f"Failed to process rasters for {stac_id}: {error_msg}",
         )
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
@@ -666,20 +638,19 @@ class ImageListDialog(BaseDialog):
     ) -> Optional[QgsRasterLayer]:
         layer = QgsRasterLayer(path, name)
         if not layer.isValid():
-            QMessageBox.warning(self, "Invalid Layer", f"Failed to load layer: {path}")
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Warning,
+                "Invalid Layer",
+                f"Failed to load layer: {path}",
+            )
             return None
-
         if is_false_color:
             renderer = QgsMultiBandColorRenderer(layer.dataProvider(), 1, 2, 3)
             layer.setRenderer(renderer)
-
         QgsProject.instance().addMapLayer(layer, False)
         if group := self.get_or_create_plugin_layer_group():
             group.insertLayer(0, layer)
-
-        # Don't zoom here, let the calling function decide when to zoom
-        # self.iface.mapCanvas().setExtent(layer.extent())
-        # self.iface.mapCanvas().refresh()
         return layer
 
     def _load_ndvi_into_qgis_layer(
@@ -687,15 +658,17 @@ class ImageListDialog(BaseDialog):
     ) -> Optional[QgsRasterLayer]:
         layer = QgsRasterLayer(ndvi_path, f"{raster_id}_NDVI")
         if not layer.isValid():
-            QMessageBox.warning(
-                self, "Invalid Layer", f"Failed to load NDVI layer from {ndvi_path}"
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Warning,
+                "Invalid Layer",
+                f"Failed to load NDVI layer from {ndvi_path}",
             )
             return None
 
         color_ramp = QgsColorRampShader()
         color_ramp.setColorRampType(QgsColorRampShader.Discrete)
         color_ramp.setColorRampItemList(classification_items)
-
         shader = QgsRasterShader()
         shader.setRasterShaderFunction(color_ramp)
         renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
@@ -705,10 +678,6 @@ class ImageListDialog(BaseDialog):
         QgsProject.instance().addMapLayer(layer, False)
         if group := self.get_or_create_plugin_layer_group():
             group.insertLayer(0, layer)
-
-        # Don't zoom here, let the calling function decide when to zoom
-        # self.iface.mapCanvas().setExtent(layer.extent())
-        # self.iface.mapCanvas().refresh()
         return layer
 
     def apply_stylesheet(self) -> None:
