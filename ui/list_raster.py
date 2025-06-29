@@ -433,8 +433,14 @@ class ImageListDialog(BaseDialog):
         return group_node
 
     def add_basemap_global_osm(self, iface: QgisInterface):
+        """
+        Ensures the OpenStreetMap basemap is present in the project,
+        without changing the current map extent.
+        """
         layer_name = "OpenStreetMap (IDPM Basemap)"
+        # Check if the layer already exists
         if not QgsProject.instance().mapLayersByName(layer_name):
+            # If not, create and add it
             url = "type=xyz&url=https://a.tile.openstreetmap.org/{z}/{x}/{y}.png&zmax=19&zmin=0"
             layer = QgsRasterLayer(url, layer_name, "wms")
             if layer.isValid():
@@ -442,15 +448,22 @@ class ImageListDialog(BaseDialog):
                 if group := self.get_or_create_plugin_layer_group():
                     group.addLayer(layer)
 
-        # Set extent to Indonesia
-        indonesia_bbox = QgsRectangle(95.0, -11.0, 141.0, 6.0)
-        dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")  # OSM CRS
-        source_crs = QgsCoordinateReferenceSystem("EPSG:4326")  # WGS 84
-        transform = QgsCoordinateTransform(source_crs, dest_crs, QgsProject.instance())
-        indonesia_bbox_transformed = transform.transform(indonesia_bbox)
-
-        iface.mapCanvas().setExtent(indonesia_bbox_transformed)
-        iface.mapCanvas().refresh()
+        # We no longer set the extent here. The extent will be set when a
+        # specific raster layer is loaded, focusing on its AOI.
+        # Set extent to Indonesia initially
+        if not any(
+            layer.name().endswith(("_Visual", "_NDVI", "_FalseColor"))
+            for layer in QgsProject.instance().mapLayers().values()
+        ):
+            indonesia_bbox = QgsRectangle(95.0, -11.0, 141.0, 6.0)
+            dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")  # OSM CRS
+            source_crs = QgsCoordinateReferenceSystem("EPSG:4326")  # WGS 84
+            transform = QgsCoordinateTransform(
+                source_crs, dest_crs, QgsProject.instance()
+            )
+            indonesia_bbox_transformed = transform.transform(indonesia_bbox)
+            iface.mapCanvas().setExtent(indonesia_bbox_transformed)
+            iface.mapCanvas().refresh()
 
     def _get_item_widget(self, stac_id: str) -> Optional[RasterItemWidget]:
         for i in range(self.list_layout.count()):
@@ -613,12 +626,22 @@ class ImageListDialog(BaseDialog):
         QMessageBox.information(
             self, "Processing Complete", f"NDVI and False Color created for {stac_id}."
         )
+
+        last_layer_extent = None
         if ndvi_path:
-            self._load_ndvi_into_qgis_layer(ndvi_path, stac_id, style_items)
+            layer = self._load_ndvi_into_qgis_layer(ndvi_path, stac_id, style_items)
+            if layer:
+                last_layer_extent = layer.extent()
         if fc_path:
-            self._load_raster_into_qgis(
+            layer = self._load_raster_into_qgis(
                 fc_path, f"{stac_id}_FalseColor", is_false_color=True
             )
+            if layer:
+                last_layer_extent = layer.extent()
+
+        if last_layer_extent:
+            self.iface.mapCanvas().setExtent(last_layer_extent)
+            self.iface.mapCanvas().refresh()
 
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
@@ -633,11 +656,11 @@ class ImageListDialog(BaseDialog):
 
     def _load_raster_into_qgis(
         self, path: str, name: str, is_false_color: bool = False
-    ):
+    ) -> Optional[QgsRasterLayer]:
         layer = QgsRasterLayer(path, name)
         if not layer.isValid():
             QMessageBox.warning(self, "Invalid Layer", f"Failed to load layer: {path}")
-            return
+            return None
 
         if is_false_color:
             renderer = QgsMultiBandColorRenderer(layer.dataProvider(), 1, 2, 3)
@@ -646,18 +669,21 @@ class ImageListDialog(BaseDialog):
         QgsProject.instance().addMapLayer(layer, False)
         if group := self.get_or_create_plugin_layer_group():
             group.insertLayer(0, layer)
-        self.iface.mapCanvas().setExtent(layer.extent())
-        self.iface.mapCanvas().refresh()
+
+        # Don't zoom here, let the calling function decide when to zoom
+        # self.iface.mapCanvas().setExtent(layer.extent())
+        # self.iface.mapCanvas().refresh()
+        return layer
 
     def _load_ndvi_into_qgis_layer(
         self, ndvi_path: str, raster_id: str, classification_items: list
-    ):
+    ) -> Optional[QgsRasterLayer]:
         layer = QgsRasterLayer(ndvi_path, f"{raster_id}_NDVI")
         if not layer.isValid():
             QMessageBox.warning(
                 self, "Invalid Layer", f"Failed to load NDVI layer from {ndvi_path}"
             )
-            return
+            return None
 
         color_ramp = QgsColorRampShader()
         color_ramp.setColorRampType(QgsColorRampShader.Discrete)
@@ -672,8 +698,11 @@ class ImageListDialog(BaseDialog):
         QgsProject.instance().addMapLayer(layer, False)
         if group := self.get_or_create_plugin_layer_group():
             group.insertLayer(0, layer)
-        self.iface.mapCanvas().setExtent(layer.extent())
-        self.iface.mapCanvas().refresh()
+
+        # Don't zoom here, let the calling function decide when to zoom
+        # self.iface.mapCanvas().setExtent(layer.extent())
+        # self.iface.mapCanvas().refresh()
+        return layer
 
     def apply_stylesheet(self) -> None:
         qss = f"""
