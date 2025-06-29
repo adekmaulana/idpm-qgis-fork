@@ -35,6 +35,7 @@ from PyQt5.QtWidgets import (
     QStyle,
     QProgressBar,
     QProgressDialog,
+    QComboBox,
 )
 from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QPainterPath, QBrush, QColor
 from PyQt5.QtCore import Qt, QSize, QUrl, QRectF, pyqtSignal
@@ -235,31 +236,56 @@ class RasterItemWidget(QWidget):
                     pbar.setFormat(f"{band.upper()}: {progress}%")
 
     def update_ui_based_on_local_files(self):
+        """
+        Updates the text and state of buttons based on whether the final
+        or source files exist locally.
+        """
         visual_path = self.asset.get_local_path("visual")
-        if os.path.exists(visual_path) and os.path.getsize(visual_path) > 0:
-            self.btn_visual.setText("Open Visual")
-        else:
-            self.btn_visual.setText("Download Visual")
-
         ndvi_path = self.asset.get_local_path("ndvi")
-        if os.path.exists(ndvi_path) and os.path.getsize(ndvi_path) > 0:
-            self.btn_ndvi.setText("Open NDVI")
-            self.btn_ndvi.setProperty("highlight", False)
-        else:
-            self.btn_ndvi.setText("Process NDVI & False Color")
-            self.btn_ndvi.setProperty("highlight", True)
-
         fc_path = self.asset.get_local_path("false_color")
-        self.btn_false_color.setVisible(
-            os.path.exists(fc_path) and os.path.getsize(fc_path) > 0
-        )
 
-        self.set_buttons_enabled(True)
+        # Reset visibility of progress bars and status label
         self.progress_bar_visual.setVisible(False)
         self.progress_bar_nir.setVisible(False)
         self.progress_bar_red.setVisible(False)
         self.progress_bar_green.setVisible(False)
         self.status_label.setVisible(False)
+
+        # Enable buttons by default, then disable them based on logic
+        self.btn_visual.setEnabled(True)
+        self.btn_ndvi.setEnabled(True)
+
+        # --- Configure Visual Button ---
+        if os.path.exists(visual_path) and os.path.getsize(visual_path) > 0:
+            self.btn_visual.setText("Open Visual")
+        else:
+            self.btn_visual.setText("Download Visual")
+
+        # --- Configure NDVI / Processing Button ---
+        if os.path.exists(ndvi_path) and os.path.getsize(ndvi_path) > 0:
+            self.btn_ndvi.setText("Open NDVI")
+            self.btn_ndvi.setProperty("highlight", False)
+        else:
+            # Check for source bands if final product doesn't exist
+            has_nir = bool(self.asset.nir_url)
+            has_red = bool(self.asset.red_url)
+
+            if has_nir and has_red:
+                has_green = bool(self.asset.green_url)
+                if has_green:
+                    self.btn_ndvi.setText("Process NDVI & False Color")
+                else:
+                    self.btn_ndvi.setText("Process NDVI")
+                self.btn_ndvi.setProperty("highlight", True)
+            else:
+                self.btn_ndvi.setText("Bands Missing")
+                self.btn_ndvi.setProperty("highlight", False)
+                self.btn_ndvi.setEnabled(False)
+
+        # --- Configure False Color Button ---
+        self.btn_false_color.setVisible(
+            os.path.exists(fc_path) and os.path.getsize(fc_path) > 0
+        )
 
     def paintEvent(self, event):
         opt = QStyleOption()
@@ -282,12 +308,13 @@ class ImageListDialog(BaseDialog):
             for feature in data
             if "properties" in feature
         ]
+        self.filtered_assets: List[RasterAsset] = []
         self.download_network_manager = QNetworkAccessManager(self)
         self.active_operations: Dict[str, Any] = {}
         self.current_page = 1
         self.items_per_page = 5
         self.init_list_ui()
-        self.update_list_and_pagination()
+        self._apply_filters()  # Initial filter
         self.add_basemap_global_osm(self.iface)
 
     def init_list_ui(self):
@@ -296,6 +323,7 @@ class ImageListDialog(BaseDialog):
         main_layout.setContentsMargins(30, 10, 30, 30)
         main_layout.addLayout(self._create_top_bar())
         main_layout.addSpacing(20)
+
         header_layout = QHBoxLayout()
         title_vbox = QVBoxLayout()
         title_vbox.addWidget(QLabel("List Raster", objectName="pageTitle"))
@@ -307,8 +335,21 @@ class ImageListDialog(BaseDialog):
         )
         header_layout.addLayout(title_vbox)
         header_layout.addStretch()
+
+        # Cloud Cover Filter
+        filter_layout = QHBoxLayout()
+        filter_layout.setSpacing(10)
+        filter_layout.addWidget(QLabel("Cloud Cover:", objectName="filterLabel"))
+        self.cloud_filter_combo = QComboBox()
+        self.cloud_filter_combo.setObjectName("filterComboBox")
+        self.cloud_filter_combo.addItems(["All", "0 - 10%", "10 - 20%", "20 - 30%"])
+        self.cloud_filter_combo.currentIndexChanged.connect(self._apply_filters)
+        filter_layout.addWidget(self.cloud_filter_combo)
+        header_layout.addLayout(filter_layout)
+
         main_layout.addLayout(header_layout)
         main_layout.addSpacing(20)
+
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setObjectName("scrollArea")
@@ -320,6 +361,30 @@ class ImageListDialog(BaseDialog):
         main_layout.addWidget(scroll_area)
         main_layout.addLayout(self._create_pagination_controls())
         self.apply_stylesheet()
+
+    def _apply_filters(self):
+        """Filters the list of assets based on the selected criteria."""
+        filter_text = self.cloud_filter_combo.currentText()
+
+        if filter_text == "All":
+            self.filtered_assets = self.all_assets
+        elif filter_text == "0 - 10%":
+            self.filtered_assets = [
+                asset for asset in self.all_assets if 0 <= asset.cloud_cover <= 10
+            ]
+        elif filter_text == "10 - 20%":
+            self.filtered_assets = [
+                asset for asset in self.all_assets if 10 < asset.cloud_cover <= 20
+            ]
+        elif filter_text == "20 - 30%":
+            self.filtered_assets = [
+                asset for asset in self.all_assets if 20 < asset.cloud_cover <= 30
+            ]
+        else:
+            self.filtered_assets = self.all_assets
+
+        self.current_page = 1
+        self.update_list_and_pagination()
 
     def _create_top_bar(self) -> QHBoxLayout:
         layout = QHBoxLayout()
@@ -352,10 +417,24 @@ class ImageListDialog(BaseDialog):
             item = self.list_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+
+        # Clear "No results" message if it exists
+        if self.list_layout.count() > 1 and isinstance(
+            self.list_layout.itemAt(0).widget(), QLabel
+        ):
+            self.list_layout.itemAt(0).widget().deleteLater()
+
+        if not self.filtered_assets:
+            no_results_label = QLabel("No assets match the current filter.")
+            no_results_label.setObjectName("noResultsLabel")
+            no_results_label.setAlignment(Qt.AlignCenter)
+            self.list_layout.insertWidget(0, no_results_label)
+
         start_index = (self.current_page - 1) * self.items_per_page
-        paginated_assets = self.all_assets[
+        paginated_assets = self.filtered_assets[
             start_index : start_index + self.items_per_page
         ]
+
         for asset in paginated_assets:
             item_widget = RasterItemWidget(asset, self)
             item_widget.downloadVisualRequested.connect(
@@ -370,8 +449,9 @@ class ImageListDialog(BaseDialog):
                 self._handle_open_false_color_requested
             )
             self.list_layout.insertWidget(self.list_layout.count() - 1, item_widget)
+
         total_pages = (
-            len(self.all_assets) + self.items_per_page - 1
+            len(self.filtered_assets) + self.items_per_page - 1
         ) // self.items_per_page
         self.page_label.setText(f"Page {self.current_page} of {max(1, total_pages)}")
         self.prev_button.setEnabled(self.current_page > 1)
@@ -384,7 +464,7 @@ class ImageListDialog(BaseDialog):
 
     def next_page(self):
         total_pages = (
-            len(self.all_assets) + self.items_per_page - 1
+            len(self.filtered_assets) + self.items_per_page - 1
         ) // self.items_per_page
         if self.current_page < total_pages:
             self.current_page += 1
@@ -696,6 +776,7 @@ class ImageListDialog(BaseDialog):
             #rasterSubtitle {{ color: #808080; font-size: 14px; font-style: italic; }}
             #rasterCloud {{ font-weight: bold; color: #274423; font-size: 12px; }}
             #rasterStatus {{ font-weight: bold; font-size: 10px; }}
+            #noResultsLabel {{ color: #808080; font-size: 16px; font-style: italic; padding: 40px; }}
             #actionButton {{ background-color: white; color: #495057; border: 1px solid #DEE2E6; padding: 8px 12px; border-radius: 12px; font-weight: bold; }}
             #actionButton:hover {{ background-color: #F8F9FA; }}
             #actionButton[highlight="true"] {{ background-color: #2E4434; color: white; border: none; }}
@@ -703,6 +784,12 @@ class ImageListDialog(BaseDialog):
             #paginationButton {{ background-color: white; color: #274423; border: 1px solid #274423; padding: 8px 16px; border-radius: 12px; }}
             #paginationButton:disabled {{ background-color: #E9ECEF; color: #6C757D; border: 1px solid #CED4DA; }}
             #pageLabel {{ color: #274423; font-size: 14px; }}
+            #filterLabel {{ color: #274423; font-weight: bold; font-size: 14px; }}
+            QComboBox#filterComboBox {{
+                font-family: "Montserrat";
+                padding: 5px;
+                min-width: 120px;
+            }}
         """
         self.setStyleSheet(qss)
 
