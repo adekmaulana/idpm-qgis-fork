@@ -16,6 +16,9 @@ from qgis.core import (
     QgsSingleBandPseudoColorRenderer,
     QgsMultiBandColorRenderer,
     QgsLayerTreeGroup,
+    QgsRectangle,
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
 )
 from PyQt5.QtWidgets import (
     QWidget,
@@ -438,6 +441,16 @@ class ImageListDialog(BaseDialog):
                 QgsProject.instance().addMapLayer(layer, False)
                 if group := self.get_or_create_plugin_layer_group():
                     group.addLayer(layer)
+
+        # Set extent to Indonesia
+        indonesia_bbox = QgsRectangle(95.0, -11.0, 141.0, 6.0)
+        dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")  # OSM CRS
+        source_crs = QgsCoordinateReferenceSystem("EPSG:4326")  # WGS 84
+        transform = QgsCoordinateTransform(source_crs, dest_crs, QgsProject.instance())
+        indonesia_bbox_transformed = transform.transform(indonesia_bbox)
+
+        iface.mapCanvas().setExtent(indonesia_bbox_transformed)
+        iface.mapCanvas().refresh()
 
     def _get_item_widget(self, stac_id: str) -> Optional[RasterItemWidget]:
         for i in range(self.list_layout.count()):
