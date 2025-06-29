@@ -57,7 +57,7 @@ class RasterAsset:
         Constructs the expected local file path for a given asset type.
 
         Args:
-            asset_type: The type of asset ('visual', 'nir', 'red', 'green', or 'ndvi').
+            asset_type: The type of asset ('visual', 'nir', 'red', 'green', 'ndvi', or 'false_color').
 
         Returns:
             The full local file path as a string.
@@ -75,6 +75,8 @@ class RasterAsset:
             file_name = os.path.basename(self.green_url.split("?")[0])
         elif asset_type == "ndvi":
             file_name = f"{self.stac_id}_NDVI.tif"
+        elif asset_type == "false_color":
+            file_name = f"{self.stac_id}_FalseColor.tif"
 
         if not file_name:
             return ""
