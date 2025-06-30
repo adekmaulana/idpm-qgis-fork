@@ -89,6 +89,18 @@ class IDPMPlugin:
         QgsMessageLog.logMessage("MinimalPlugin unloaded.", "IDPMPlugin", Qgis.Info)
 
     def run(self) -> None:
+        from qgis.utils import plugins
+
+        if "a00_qpip" not in plugins:
+            ThemedMessageBox.show_message(
+                self.iface.mainWindow(),
+                QMessageBox.Critical,
+                "Dependency Missing",
+                "The 'qpip' plugin is required for IDPMPlugin to function. "
+                "Please install it from the QGIS Plugin Manager.",
+            )
+            return
+
         settings = QSettings()
         token = settings.value("IDPMPlugin/token", defaultValue=None, type=str)
 

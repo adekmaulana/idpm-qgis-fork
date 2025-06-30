@@ -1,7 +1,8 @@
 from typing import Optional
-import sys
 import os
 import json
+from datetime import datetime
+
 from PyQt5.QtWidgets import (
     QApplication,
     QWidget,
@@ -10,16 +11,14 @@ from PyQt5.QtWidgets import (
     QLabel,
     QPushButton,
     QMessageBox,
-    QInputDialog,
     QDialog,
     QMenu,
-    QAction,
     QStyleOption,
     QStyle,
 )
 from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QMouseEvent
 from PyQt5.QtSvg import QSvgRenderer
-from PyQt5.QtCore import Qt, QSize, QUrl, QSettings, QByteArray, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, QUrl, QSettings, pyqtSignal
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from qgis.gui import QgisInterface
 from qgis.core import Qgis, QgsMessageLog
@@ -30,6 +29,7 @@ from .profile import ProfileDialog
 from .loading import LoadingDialog
 from .custom_input_dialog import CustomInputDialog
 from .themed_message_box import ThemedMessageBox
+from ..core.database import add_basemap_global_osm, load_existing_layer
 
 
 class ActionCard(QWidget):
@@ -168,7 +168,8 @@ class MenuWidget(BaseDialog):
         self.title_label.setObjectName("titleLabel")
         self.title_label.setFont(QFont("Montserrat", 22, QFont.Bold))
         self.title_label.setAlignment(Qt.AlignCenter)
-        subtitle_label = QLabel("Kelola dan Jelajahi Data Geospasial Anda")
+        subtitle_label = QLabel("Kelola dan Jelajahi\nData Geospasial Anda")
+        subtitle_label.setWordWrap(True)
         subtitle_label.setObjectName("subtitleLabel")
         subtitle_label.setFont(QFont("Montserrat", 28, QFont.Bold))
         subtitle_label.setAlignment(Qt.AlignCenter)
@@ -199,6 +200,8 @@ class MenuWidget(BaseDialog):
             icon_path_existing, "Open Data Existing", "View Detail"
         )
         self.card_list_raster.clicked.connect(self.open_image_list)
+        self.card_open_existing.clicked.connect(self.open_existing_data)
+
         button_layout.addWidget(self.card_list_raster)
         button_layout.addWidget(self.card_open_potensi)
         button_layout.addWidget(self.card_open_existing)
@@ -206,6 +209,111 @@ class MenuWidget(BaseDialog):
         main_layout.addLayout(content_layout)
         main_layout.addStretch(2)
         self.apply_stylesheet()
+
+    def _get_selected_wilker(self) -> Optional[str]:
+        """
+        Helper function to get the working area (wilker) from the user.
+        Handles profile loading, single vs. multiple wilkers, and errors.
+        """
+        if not self.user_profile:
+            ThemedMessageBox.show_message(
+                self, QMessageBox.Critical, "Error", "User profile not loaded."
+            )
+            return None
+
+        try:
+            wilker_str = self.user_profile.get("wilker", "")
+            wilker_list = sorted(
+                [w.strip() for w in wilker_str.split(",") if w.strip()]
+            )
+
+            if not wilker_list:
+                ThemedMessageBox.show_message(
+                    self,
+                    QMessageBox.Warning,
+                    "No Working Area",
+                    "Your user profile does not have a working area ('wilker') assigned.",
+                )
+                return None
+
+            if len(wilker_list) == 1:
+                return wilker_list[0]
+            else:
+                dialog = CustomInputDialog(
+                    self,
+                    "Select Working Area",
+                    "Please select your working area:",
+                    wilker_list,
+                )
+                if dialog.exec_() == QDialog.Accepted:
+                    return dialog.selectedItem()
+                else:
+                    return None  # User cancelled
+        except Exception as e:
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Profile Error",
+                f"Could not read user profile 'wilker' attribute: {e}",
+            )
+            return None
+
+    def open_existing_data(self):
+        """
+        Handles the workflow for loading the 'Existing' data layer.
+        """
+        selected_wilker = self._get_selected_wilker()
+        if not selected_wilker:
+            return
+
+        # Prompt for year
+        current_year = datetime.now().year
+        years = [str(year) for year in range(2021, current_year + 1)]
+
+        dialog = CustomInputDialog(
+            self,
+            "Select Year",
+            f"Select a year for the 'Existing' data in {selected_wilker}:",
+            years,
+        )
+
+        if dialog.exec_() == QDialog.Accepted:
+            selected_year_str = dialog.selectedItem()
+            selected_year = int(selected_year_str)
+
+            # Show loading indicator and attempt to load layer
+            if self.loading_dialog is None:
+                self.loading_dialog = LoadingDialog(self)
+
+            self.setEnabled(False)
+            self.loading_dialog.show()
+            QApplication.processEvents()  # Ensure loading dialog appears
+
+            # Load Base Map
+            add_basemap_global_osm(self.iface)
+
+            layer = load_existing_layer(selected_wilker, selected_year)
+
+            self.setEnabled(True)
+            self.loading_dialog.hide()
+
+            if layer is not None and layer.isValid():
+                ThemedMessageBox.show_message(
+                    self,
+                    QMessageBox.Information,
+                    "Success",
+                    f"Layer '{layer.name()}' loaded successfully.",
+                )
+                self.iface.mapCanvas().zoomToFeatureExtent(layer.extent())
+                self.iface.mapCanvas().refresh()
+            else:
+                ThemedMessageBox.show_message(
+                    self,
+                    QMessageBox.Critical,
+                    "Load Failed",
+                    f"Could not load the 'Existing' data for {selected_year}. "
+                    "Please check the database connection and verify that the data exists.",
+                )
 
     def _load_and_apply_profile(self):
         settings = QSettings()
@@ -255,48 +363,7 @@ class MenuWidget(BaseDialog):
             self.accept()
 
     def open_image_list(self, event=None):
-        if not self.user_profile:
-            ThemedMessageBox.show_message(
-                self, QMessageBox.Critical, "Error", "User profile not loaded."
-            )
-            return
-
-        selected_wilker = None
-        try:
-            wilker_str = self.user_profile.get("wilker", "")
-            wilker_list = sorted(
-                [w.strip() for w in wilker_str.split(",") if w.strip()]
-            )
-            if not wilker_list:
-                ThemedMessageBox.show_message(
-                    self,
-                    QMessageBox.Warning,
-                    "No Working Area",
-                    "No valid working area found.",
-                )
-                return
-            if len(wilker_list) == 1:
-                selected_wilker = wilker_list[0]
-            else:
-                dialog = CustomInputDialog(
-                    self,
-                    "Select Working Area",
-                    "Please select your working area:",
-                    wilker_list,
-                )
-                if dialog.exec_() == QDialog.Accepted:
-                    selected_wilker = dialog.selectedItem()
-                else:
-                    return
-        except Exception as e:
-            ThemedMessageBox.show_message(
-                self,
-                QMessageBox.Critical,
-                "Profile Error",
-                f"Could not read user profile: {e}",
-            )
-            return
-
+        selected_wilker = self._get_selected_wilker()
         if not selected_wilker:
             return
 

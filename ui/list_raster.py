@@ -49,9 +49,6 @@ from ..core import NdvITask, RasterAsset
 from .themed_message_box import ThemedMessageBox
 
 
-PLUGIN_LAYER_GROUP_NAME = "IDPM Layers"
-
-
 class RoundedImageLabel(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -467,9 +464,9 @@ class ImageListDialog(BaseDialog):
         root = project.layerTreeRoot()
         if not root:
             return None
-        group_node = root.findGroup(PLUGIN_LAYER_GROUP_NAME)
+        group_node = root.findGroup(Config.IDPM_PLUGIN_GROUP_NAME)
         if group_node is None:
-            group_node = root.addGroup(PLUGIN_LAYER_GROUP_NAME)
+            group_node = root.addGroup(Config.IDPM_PLUGIN_GROUP_NAME)
         return group_node
 
     def add_basemap_global_osm(self, iface: QgisInterface):

@@ -7,3 +7,4 @@ qgisMinimumVersion=3.0
 author=Adek Maulana
 email=adekzmaulana@gmail.com
 repository=https://gitlab.floothink.com/naghayasha-rahardja/m4cr-klhk/qgis-plugins
+plugin_dependencies=qpip
