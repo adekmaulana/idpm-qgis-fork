@@ -472,7 +472,8 @@ class ImageListDialog(BaseDialog):
     def add_basemap_global_osm(self, iface: QgisInterface):
         layer_name = "OpenStreetMap (IDPM Basemap)"
         if not QgsProject.instance().mapLayersByName(layer_name):
-            url = "type=xyz&url=https://a.tile.openstreetmap.org/{z}/{x}/{y}.png&zmax=19&zmin=0"
+            # *** FIX: Added cache=yes and max-age parameters to the URL ***
+            url = "type=xyz&url=https://a.tile.openstreetmap.org/{z}/{x}/{y}.png&zmax=19&zmin=0&cache=yes&max-age=2592000"
             layer = QgsRasterLayer(url, layer_name, "wms")
             if layer.isValid():
                 QgsProject.instance().addMapLayer(layer, False)

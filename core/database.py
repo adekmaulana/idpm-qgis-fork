@@ -80,7 +80,7 @@ def get_or_create_plugin_layer_group() -> Optional[QgsLayerTreeGroup]:
 def add_basemap_global_osm(iface: QgisInterface) -> Optional[QgsRasterLayer]:
     """
     Adds OpenStreetMap as a basemap layer and zooms to Indonesia's extent
-    if no other project layers are present.
+    if no other project layers are present. This version enables caching.
     """
     layer_name = "OpenStreetMap (IDPM Basemap)"
     plugin_group = get_or_create_plugin_layer_group()
@@ -94,8 +94,10 @@ def add_basemap_global_osm(iface: QgisInterface) -> Optional[QgsRasterLayer]:
                 break
 
     if basemap_layer is None:
+        # *** FIX: Added cache=yes and max-age parameters to the URL ***
+        # max-age is in seconds (30 days = 2592000 seconds)
         url = "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        layer_source = f"type=xyz&url={url}&zmax=19&zmin=0"
+        layer_source = f"type=xyz&url={url}&zmax=19&zmin=0&cache=yes&max-age=2592000"
         basemap_layer = QgsRasterLayer(layer_source, layer_name, "wms")
 
         if basemap_layer.isValid():
