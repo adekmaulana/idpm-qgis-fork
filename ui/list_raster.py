@@ -668,7 +668,8 @@ class ImageListDialog(BaseDialog):
             f"Processing Rasters for {asset.stac_id}...", "Cancel", 0, 100, self
         )
         progress.setWindowModality(Qt.WindowModal)
-        task.progressChanged.connect(progress.setValue)
+        # Set to int to avoid float issues in progress bar
+        task.progressChanged.connect(lambda value: progress.setValue(int(value)))
         task.calculationFinished.connect(
             lambda ndvi_path, fc_path: self._on_processing_finished(
                 ndvi_path, fc_path, asset.stac_id, style_items
