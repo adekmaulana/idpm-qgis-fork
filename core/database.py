@@ -46,16 +46,16 @@ def create_db_uri(
         return None
 
     uri = QgsDataSourceUri()
-    db_name_lower = wilker_name.lower().replace(" ", "_")  # Sanitize name
+    db_name_lower = wilker_name.lower().replace(" ", "")  # Sanitize name
 
     uri.setConnection(db_host, db_port, db_name_lower, db_user, db_password)
     uri.setDataSource("public", table, geom_col, "", pkey)
 
-    QgsMessageLog.logMessage(
-        f"Attempting connection to db: '{db_name_lower}' on host: '{db_host}'",
-        "IDPMPlugin",
-        Qgis.Info,
-    )
+    # QgsMessageLog.logMessage(
+    #     f"Attempting connection to db: '{db_name_lower}' on host: '{db_host}'",
+    #     "IDPMPlugin",
+    #     Qgis.Info,
+    # )
 
     return uri
 
