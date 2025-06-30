@@ -61,8 +61,17 @@ def create_db_uri(
 
 
 def get_existing_table_name(year: int) -> str:
-    """Returns the table name for the 'Existing' layer, e.g., 'eksisting_2024'."""
+    """
+    Returns the table name for the main 'Existing' layer, e.g., 'eksisting_2024'.
+    """
     return f"eksisting_{year}"
+
+
+def get_existing_qc_table_name(year: int) -> str:
+    """
+    Returns the table name for the 'Existing QC' layer, e.g., 'eksisting_2024_qc'.
+    """
+    return f"eksisting_{year}_qc"
 
 
 def get_or_create_plugin_layer_group() -> Optional[QgsLayerTreeGroup]:
@@ -94,7 +103,7 @@ def add_basemap_global_osm(iface: QgisInterface) -> Optional[QgsRasterLayer]:
                 break
 
     if basemap_layer is None:
-        # *** FIX: Added cache=yes and max-age parameters to the URL ***
+        # Added cache=yes and max-age parameters to the URL
         # max-age is in seconds (30 days = 2592000 seconds)
         url = "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
         layer_source = f"type=xyz&url={url}&zmax=19&zmin=0&cache=yes&max-age=2592000"
@@ -130,8 +139,7 @@ def add_basemap_global_osm(iface: QgisInterface) -> Optional[QgsRasterLayer]:
 
 def load_existing_layer(wilker_name: str, year: int) -> Optional[QgsVectorLayer]:
     """
-    Loads the 'Existing' vector layer for a specific wilker and year.
-    Checks if the layer already exists before loading.
+    Loads the main 'Existing' vector layer for viewing.
     """
     table_name = get_existing_table_name(year)
     layer_name = f"Existing {year} - {wilker_name}"
