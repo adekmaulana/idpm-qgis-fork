@@ -49,7 +49,7 @@ from ..config import Config
 from .base_dialog import BaseDialog
 from .ndvi_style_dialog import NdviStyleDialog
 from .raster_calculator_dialog import RasterCalculatorDialog
-from ..core import NdvITask, RasterAsset
+from ..core import NdviTask, FalseColorTask, RasterAsset
 from ..core.database import add_basemap_global_osm
 from .themed_message_box import ThemedMessageBox
 
@@ -86,11 +86,11 @@ class RasterItemWidget(QWidget):
     downloadVisualRequested = pyqtSignal(RasterAsset)
     openVisualRequested = pyqtSignal(RasterAsset)
     processNdviRequested = pyqtSignal(RasterAsset, list)
+    processFalseColorRequested = pyqtSignal(RasterAsset)
     openNdviRequested = pyqtSignal(RasterAsset)
     openFalseColorRequested = pyqtSignal(RasterAsset)
     customCalculationRequested = pyqtSignal(RasterAsset, str, str, dict)
-    # *** ADDED: Signal for classifying a custom layer ***
-    classifyCustomRequested = pyqtSignal(str, str)  # layer name, layer path
+    classifyCustomRequested = pyqtSignal(str, str)
 
     def __init__(self, asset: RasterAsset, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -147,7 +147,7 @@ class RasterItemWidget(QWidget):
         self.btn_ndvi.clicked.connect(self._on_ndvi_button_clicked)
         buttons_layout.addWidget(self.btn_ndvi)
 
-        self.btn_false_color = QPushButton("Open False Color")
+        self.btn_false_color = QPushButton()
         self.btn_false_color.setObjectName("actionButton")
         self.btn_false_color.clicked.connect(self._on_false_color_button_clicked)
         buttons_layout.addWidget(self.btn_false_color)
@@ -159,7 +159,6 @@ class RasterItemWidget(QWidget):
 
         layout.addLayout(buttons_layout)
 
-        # *** ADDED: Layout for custom output buttons ***
         self.custom_outputs_layout = QVBoxLayout()
         layout.addLayout(self.custom_outputs_layout)
 
@@ -242,8 +241,7 @@ class RasterItemWidget(QWidget):
             self.downloadVisualRequested.emit(self.asset)
 
     def _on_ndvi_button_clicked(self):
-        ndvi_path = self.asset.get_local_path("ndvi")
-        if os.path.exists(ndvi_path) and os.path.getsize(ndvi_path) > 0:
+        if self.btn_ndvi.text() == "Open NDVI":
             self.openNdviRequested.emit(self.asset)
         else:
             style_dialog = NdviStyleDialog(self)
@@ -256,7 +254,14 @@ class RasterItemWidget(QWidget):
                 self.processNdviRequested.emit(self.asset, classification_items)
 
     def _on_false_color_button_clicked(self):
-        self.openFalseColorRequested.emit(self.asset)
+        if self.btn_false_color.text() == "Open False Color":
+            self.openFalseColorRequested.emit(self.asset)
+        else:
+            self.set_buttons_enabled(False)
+            self.status_label.setVisible(True)
+            self.status_label.setText("Downloading bands for False Color...")
+            self.bands_progress_container.setVisible(True)
+            self.processFalseColorRequested.emit(self.asset)
 
     def set_buttons_enabled(self, enabled: bool):
         self.btn_visual.setEnabled(enabled)
@@ -308,19 +313,25 @@ class RasterItemWidget(QWidget):
             self.btn_ndvi.setText("Open NDVI")
         else:
             self.btn_ndvi.setText("Process NDVI")
+        self.btn_ndvi.setEnabled(bool(self.asset.nir_url) and bool(self.asset.red_url))
 
-        self.btn_false_color.setVisible(
-            os.path.exists(fc_path) and os.path.getsize(fc_path) > 0
+        if os.path.exists(fc_path) and os.path.getsize(fc_path) > 0:
+            self.btn_false_color.setText("Open False Color")
+        else:
+            self.btn_false_color.setText("Process False Color")
+        self.btn_false_color.setEnabled(
+            bool(self.asset.nir_url)
+            and bool(self.asset.red_url)
+            and bool(self.asset.green_url)
         )
+
         self.btn_calculator.setEnabled(
             bool(self.asset.nir_url) and bool(self.asset.red_url)
         )
 
-        # *** ADDED: Check for and display buttons for custom outputs ***
         self._update_custom_output_buttons()
 
     def _update_custom_output_buttons(self):
-        # Clear existing custom buttons
         while self.custom_outputs_layout.count():
             child = self.custom_outputs_layout.takeAt(0)
             if child.widget():
@@ -334,7 +345,6 @@ class RasterItemWidget(QWidget):
             if filename.startswith(f"{self.asset.stac_id}_") and filename.endswith(
                 ".tif"
             ):
-                # Exclude default outputs
                 if (
                     "_NDVI." in filename
                     or "_FalseColor." in filename
@@ -395,7 +405,7 @@ class ImageListDialog(BaseDialog):
         title_vbox.addWidget(QLabel("List Raster", objectName="pageTitle"))
         title_vbox.addWidget(
             QLabel(
-                "Select raster data to download or process into NDVI.",
+                "Select raster data to download or process.",
                 objectName="pageSubtitle",
             )
         )
@@ -513,6 +523,9 @@ class ImageListDialog(BaseDialog):
             item_widget.processNdviRequested.connect(
                 self._handle_process_ndvi_requested
             )
+            item_widget.processFalseColorRequested.connect(
+                self._handle_process_false_color_requested
+            )
             item_widget.openNdviRequested.connect(self._handle_open_ndvi_requested)
             item_widget.openFalseColorRequested.connect(
                 self._handle_open_false_color_requested
@@ -616,21 +629,14 @@ class ImageListDialog(BaseDialog):
             bands_to_download["nir"] = (asset.nir_url, asset.get_local_path("nir"))
         if asset.red_url:
             bands_to_download["red"] = (asset.red_url, asset.get_local_path("red"))
-        if asset.green_url:
-            bands_to_download["green"] = (
-                asset.green_url,
-                asset.get_local_path("green"),
-            )
 
-        if "nir" not in bands_to_download or "red" not in bands_to_download:
+        if not all(k in bands_to_download for k in ["nir", "red"]):
             ThemedMessageBox.show_message(
                 self,
                 QMessageBox.Warning,
                 "Missing Assets",
                 f"NIR or Red bands not found for {asset.stac_id}.",
             )
-            if item_widget := self._get_item_widget(asset.stac_id):
-                item_widget.update_ui_based_on_local_files()
             return
 
         op_key = f"{asset.stac_id}_ndvi"
@@ -639,6 +645,40 @@ class ImageListDialog(BaseDialog):
             "expected": len(bands_to_download),
             "completed": {},
             "style": classification_items,
+            "asset": asset,
+        }
+        for band_type, (url, save_path) in bands_to_download.items():
+            if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
+                self._on_band_download_complete(op_key, band_type, save_path)
+            else:
+                self._start_download(asset, band_type, url, save_path, op_key)
+
+    def _handle_process_false_color_requested(self, asset: RasterAsset):
+        bands_to_download = {}
+        if asset.nir_url:
+            bands_to_download["nir"] = (asset.nir_url, asset.get_local_path("nir"))
+        if asset.red_url:
+            bands_to_download["red"] = (asset.red_url, asset.get_local_path("red"))
+        if asset.green_url:
+            bands_to_download["green"] = (
+                asset.green_url,
+                asset.get_local_path("green"),
+            )
+
+        if not all(k in bands_to_download for k in ["nir", "red", "green"]):
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Warning,
+                "Missing Assets",
+                f"NIR, Red, or Green bands not found for {asset.stac_id}.",
+            )
+            return
+
+        op_key = f"{asset.stac_id}_false_color"
+        self.active_operations[op_key] = {
+            "type": "false_color",
+            "expected": len(bands_to_download),
+            "completed": {},
             "asset": asset,
         }
         for band_type, (url, save_path) in bands_to_download.items():
@@ -719,7 +759,7 @@ class ImageListDialog(BaseDialog):
 
             if op_key:
                 self._on_band_download_complete(op_key, band, save_path)
-            else:  # Standalone download like 'visual'
+            else:
                 layer = self._load_raster_into_qgis(
                     asset, save_path, f"{stac_id}_Visual"
                 )
@@ -797,7 +837,9 @@ class ImageListDialog(BaseDialog):
                     op["coefficients"],
                 )
             elif op["type"] == "ndvi":
-                self._calculate_ndvi_and_fc(asset, op["style"])
+                self._calculate_ndvi(asset, op["style"])
+            elif op["type"] == "false_color":
+                self._calculate_false_color(asset)
 
             if op_key in self.active_operations:
                 del self.active_operations[op_key]
@@ -856,7 +898,7 @@ class ImageListDialog(BaseDialog):
 
         result = calc.processCalculation()
 
-        if result == QgsRasterCalculator.NoError:
+        if result == QgsRasterCalculator.Success:
             self._on_custom_calculation_finished(output_path, output_name)
         else:
             self._on_task_error(
@@ -871,11 +913,9 @@ class ImageListDialog(BaseDialog):
             f"Successfully created '{name}'.",
         )
         self._load_raster_into_qgis(None, path, name)
-        # Refresh the UI to show the new classify button
         self.update_list_and_pagination()
 
     def _handle_classify_custom_requested(self, layer_name: str, layer_path: str):
-        """Handles the request to classify a custom calculated raster."""
         style_dialog = NdviStyleDialog(self)
         if style_dialog.exec_() == QDialog.Accepted:
             items = style_dialog.get_classification_items()
@@ -899,58 +939,78 @@ class ImageListDialog(BaseDialog):
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
 
-    def _calculate_ndvi_and_fc(self, asset: RasterAsset, style_items: list):
-        red_path = asset.get_local_path("red")
-        nir_path = asset.get_local_path("nir")
-        green_path = asset.get_local_path("green")
-        folder_path = os.path.dirname(red_path)
-
-        task = NdvITask(red_path, nir_path, green_path, folder_path, asset.stac_id)
-
+    def _calculate_ndvi(self, asset: RasterAsset, style_items: list):
+        task = NdviTask(
+            asset.get_local_path("red"),
+            asset.get_local_path("nir"),
+            os.path.dirname(asset.get_local_path("red")),
+            asset.stac_id,
+        )
         progress = QProgressDialog(
-            f"Processing Rasters for {asset.stac_id}...", "Cancel", 0, 100, self
+            f"Processing NDVI for {asset.stac_id}...", "Cancel", 0, 100, self
         )
         progress.setWindowModality(Qt.WindowModal)
         task.progressChanged.connect(progress.setValue)
         task.calculationFinished.connect(
-            lambda ndvi_path, fc_path: self._on_processing_finished(
-                ndvi_path, fc_path, asset.stac_id, style_items
+            lambda path: self._on_ndvi_processing_finished(
+                path, asset.stac_id, style_items
             )
         )
-        task.errorOccurred.connect(lambda err: self._on_task_error(err, asset.stac_id))
+        task.errorOccurred.connect(lambda err: self._on_task_error(err, "NDVI"))
         progress.canceled.connect(task.cancel)
         QgsApplication.taskManager().addTask(task)
 
-    def _on_processing_finished(
-        self, ndvi_path: str, fc_path: str, stac_id: str, style_items: list
+    def _calculate_false_color(self, asset: RasterAsset):
+        task = FalseColorTask(
+            asset.get_local_path("nir"),
+            asset.get_local_path("red"),
+            asset.get_local_path("green"),
+            os.path.dirname(asset.get_local_path("red")),
+            asset.stac_id,
+        )
+        progress = QProgressDialog(
+            f"Processing False Color for {asset.stac_id}...", "Cancel", 0, 100, self
+        )
+        progress.setWindowModality(Qt.WindowModal)
+        task.progressChanged.connect(progress.setValue)
+        task.calculationFinished.connect(
+            lambda path: self._on_fc_processing_finished(path, asset.stac_id)
+        )
+        task.errorOccurred.connect(lambda err: self._on_task_error(err, "False Color"))
+        progress.canceled.connect(task.cancel)
+        QgsApplication.taskManager().addTask(task)
+
+    def _on_ndvi_processing_finished(
+        self, ndvi_path: str, stac_id: str, style_items: list
     ):
         ThemedMessageBox.show_message(
             self,
             QMessageBox.Information,
             "Processing Complete",
-            f"NDVI and False Color created for {stac_id}.",
+            f"NDVI created for {stac_id}.",
         )
-
-        last_layer_extent = None
         asset = next((a for a in self.all_assets if a.stac_id == stac_id), None)
-        if not asset:
-            return
-
-        if ndvi_path:
+        if asset:
             layer = self._load_ndvi_into_qgis_layer(asset, ndvi_path, style_items)
             if layer:
-                last_layer_extent = layer.extent()
-        if fc_path:
+                self.iface.mapCanvas().setExtent(layer.extent())
+        if item_widget := self._get_item_widget(stac_id):
+            item_widget.update_ui_based_on_local_files()
+
+    def _on_fc_processing_finished(self, fc_path: str, stac_id: str):
+        ThemedMessageBox.show_message(
+            self,
+            QMessageBox.Information,
+            "Processing Complete",
+            f"False Color created for {stac_id}.",
+        )
+        asset = next((a for a in self.all_assets if a.stac_id == stac_id), None)
+        if asset:
             layer = self._load_raster_into_qgis(
                 asset, fc_path, f"{stac_id}_FalseColor", is_false_color=True
             )
             if layer:
-                last_layer_extent = layer.extent()
-
-        if last_layer_extent:
-            self.iface.mapCanvas().setExtent(last_layer_extent)
-            self.iface.mapCanvas().refresh()
-
+                self.iface.mapCanvas().setExtent(layer.extent())
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
 
@@ -962,7 +1022,6 @@ class ImageListDialog(BaseDialog):
         is_false_color: bool = False,
         classification_items: Optional[list] = None,
     ) -> Optional[QgsRasterLayer]:
-        # Check if layer already exists and remove it to apply new style
         layers = QgsProject.instance().mapLayersByName(name)
         if layers:
             QgsProject.instance().removeMapLayer(layers[0].id())
