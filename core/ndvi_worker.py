@@ -20,6 +20,22 @@ class NdvITask(QgsTask):
         self.false_color_path = None
         self.exception = None
 
+    def _scale_to_uint8(self, band_array, min_val=0, max_val=4000):
+        """
+        Scales a raster band array to an 8-bit integer range (0-255)
+        for visualization. This performs a linear contrast stretch.
+        """
+        # Ensure the array is float to avoid overflow issues during calculations
+        band_array = band_array.astype(np.float32)
+        # Clip the data to the desired range to handle outliers
+        clipped_array = np.clip(band_array, min_val, max_val)
+        # Avoid division by zero if max and min are the same
+        if max_val == min_val:
+            return np.zeros_like(band_array, dtype=np.uint8)
+        # Scale the clipped data to the 0-255 range
+        scaled_array = ((clipped_array - min_val) / (max_val - min_val)) * 255.0
+        return scaled_array.astype(np.uint8)
+
     def run(self):
         try:
             # --- NDVI Calculation ---
@@ -40,6 +56,7 @@ class NdvITask(QgsTask):
             if self.isCanceled():
                 return False
 
+            # Add a small epsilon to the denominator to avoid division by zero
             ndvi = (nir_band - red_band) / (nir_band + red_band + 1e-10)
 
             driver = gdal.GetDriverByName("GTiff")
@@ -84,14 +101,21 @@ class NdvITask(QgsTask):
                         red_ds.RasterXSize,
                         red_ds.RasterYSize,
                         3,
-                        gdal.GDT_Byte,
+                        gdal.GDT_Byte,  # Create an 8-bit raster
                     )
 
-                    fc_ds.GetRasterBand(1).WriteArray(nir_band.astype(np.uint8))  # NIR
-                    fc_ds.GetRasterBand(2).WriteArray(red_band.astype(np.uint8))  # Red
+                    # *** FIX: Scale bands to 0-255 before writing to the 8-bit file ***
+                    nir_scaled = self._scale_to_uint8(nir_band)
+                    red_scaled = self._scale_to_uint8(red_band)
+                    green_scaled = self._scale_to_uint8(green_band)
+
+                    fc_ds.GetRasterBand(1).WriteArray(nir_scaled)  # NIR -> Red channel
+                    fc_ds.GetRasterBand(2).WriteArray(
+                        red_scaled
+                    )  # Red -> Green channel
                     fc_ds.GetRasterBand(3).WriteArray(
-                        green_band.astype(np.uint8)
-                    )  # Green
+                        green_scaled
+                    )  # Green -> Blue channel
 
                     fc_ds.SetProjection(red_ds.GetProjection())
                     fc_ds.SetGeoTransform(red_ds.GetGeoTransform())
