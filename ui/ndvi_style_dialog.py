@@ -47,7 +47,7 @@ class NdviStyleDialog(QDialog):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setWindowTitle("Customize NDVI Classification")
+        self.setWindowTitle("Customize Classification")
         self.setMinimumWidth(500)
 
         self.rows: List[Tuple[QDoubleSpinBox, ColorPickerButton, QLineEdit]] = []
