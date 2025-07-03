@@ -8,7 +8,6 @@ from qgis.core import Qgis, QgsMessageLog
 from qgis.gui import QgisInterface
 
 from ..config import Config
-from ..ui import LoginWidget, MenuWidget, ThemedMessageBox
 
 
 class IDPMPlugin:
@@ -90,6 +89,7 @@ class IDPMPlugin:
 
     def run(self) -> None:
         from qgis.utils import plugins
+        from ..ui import ThemedMessageBox
 
         if "a00_qpip" not in plugins:
             ThemedMessageBox.show_message(
@@ -118,9 +118,11 @@ class IDPMPlugin:
 
     def show_menu_dialog_singleton(self) -> None:
         """
-        Creates and shows the MenuWidget if it doesn't exist (singleton),
-        or brings the existing one to the front.
+        Creates and shows the MenuWidget if it doesn't exist,
+        or brings the existing one (or its child dialogs) to the front.
         """
+        from ..ui import MenuWidget
+
         if self._menu_dialog_instance is None:
             QgsMessageLog.logMessage(
                 "Creating new MenuWidget (singleton).", "IDPMPlugin", Qgis.Info
@@ -131,11 +133,15 @@ class IDPMPlugin:
             self._menu_dialog_instance.finished.connect(self._handle_menu_dialog_closed)
             self._menu_dialog_instance.show()
         else:
-            QgsMessageLog.logMessage(
-                "Raising existing MenuWidget (singleton).", "IDPMPlugin", Qgis.Info
-            )
-            self._menu_dialog_instance.raise_()
-            self._menu_dialog_instance.activateWindow()
+            if (
+                hasattr(self._menu_dialog_instance, "image_list_dialog")
+                and self._menu_dialog_instance.image_list_dialog is not None
+            ):
+                self._menu_dialog_instance.image_list_dialog.raise_()
+                self._menu_dialog_instance.image_list_dialog.activateWindow()
+            else:
+                self._menu_dialog_instance.raise_()
+                self._menu_dialog_instance.activateWindow()
 
     def _handle_menu_dialog_closed(self, result_code: int) -> None:
         """Slot called when MenuDialog is closed, clears the instance reference."""
@@ -163,6 +169,8 @@ class IDPMPlugin:
         )
 
     def handle_form_token_response(self, reply) -> None:
+        from ..ui import LoginWidget, ThemedMessageBox
+
         message_bar = self.iface.messageBar()
         if message_bar is not None:
             message_bar.clearWidgets()

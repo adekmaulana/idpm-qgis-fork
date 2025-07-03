@@ -211,22 +211,16 @@ class MenuWidget(BaseDialog):
         self.apply_stylesheet()
 
     def _get_selected_wilker(self) -> Optional[str]:
-        """
-        Helper function to get the working area (wilker) from the user.
-        Handles profile loading, single vs. multiple wilkers, and errors.
-        """
         if not self.user_profile:
             ThemedMessageBox.show_message(
                 self, QMessageBox.Critical, "Error", "User profile not loaded."
             )
             return None
-
         try:
             wilker_str = self.user_profile.get("wilker", "")
             wilker_list = sorted(
                 [w.strip() for w in wilker_str.split(",") if w.strip()]
             )
-
             if not wilker_list:
                 ThemedMessageBox.show_message(
                     self,
@@ -235,7 +229,6 @@ class MenuWidget(BaseDialog):
                     "Your user profile does not have a working area ('wilker') assigned.",
                 )
                 return None
-
             if len(wilker_list) == 1:
                 return wilker_list[0]
             else:
@@ -248,7 +241,7 @@ class MenuWidget(BaseDialog):
                 if dialog.exec_() == QDialog.Accepted:
                     return dialog.selectedItem()
                 else:
-                    return None  # User cancelled
+                    return None
         except Exception as e:
             ThemedMessageBox.show_message(
                 self,
@@ -258,15 +251,89 @@ class MenuWidget(BaseDialog):
             )
             return None
 
-    def open_existing_data(self):
-        """
-        Handles the workflow for loading the 'Existing' data layer.
-        """
+    def open_image_list(self):
         selected_wilker = self._get_selected_wilker()
         if not selected_wilker:
             return
 
-        # Prompt for year
+        settings = QSettings()
+        token = settings.value("IDPMPlugin/token", None)
+        if not token:
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Authentication Error",
+                "You are not logged in.",
+            )
+            return
+
+        if self.loading_dialog is None:
+            self.loading_dialog = LoadingDialog(self)
+        self.setEnabled(False)
+        self.loading_dialog.show()
+
+        request_url = f"{Config.API_URL}/geoportal/sentinel/catalog/{selected_wilker}"
+        request = QNetworkRequest(QUrl(request_url))
+        request.setRawHeader(b"Authorization", f"Bearer {token}".encode())
+        self.network_manager.finished.connect(self.handle_catalog_list_response)
+        self.network_manager.get(request)
+
+    def handle_catalog_list_response(self, reply: QNetworkReply):
+        from .list_raster import ImageListDialog
+
+        self.setEnabled(True)
+        if self.loading_dialog:
+            self.loading_dialog.close()
+
+        try:
+            self.network_manager.finished.disconnect(self.handle_catalog_list_response)
+        except TypeError:
+            pass
+
+        if reply.error():
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Error",
+                f"Failed to fetch image list: {reply.errorString()}",
+            )
+            return
+
+        response_data = reply.readAll().data()
+        try:
+            response = json.loads(response_data.decode("utf-8"))
+            features = response.get("data", {}).get("features", [])
+
+            if self.image_list_dialog is None:
+                self.image_list_dialog = ImageListDialog(
+                    features, self.iface, self.iface.mainWindow()
+                )
+                self.image_list_dialog.finished.connect(self._on_image_list_closed)
+                self.hide()
+                self.image_list_dialog.show()
+            else:
+                self.image_list_dialog.raise_()
+                self.image_list_dialog.activateWindow()
+
+        except (json.JSONDecodeError, Exception) as e:
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Error",
+                f"An unexpected error occurred: {e}",
+            )
+        finally:
+            reply.deleteLater()
+
+    def _on_image_list_closed(self):
+        self.show()
+        self.image_list_dialog = None
+
+    def open_existing_data(self):
+        selected_wilker = self._get_selected_wilker()
+        if not selected_wilker:
+            return
+
         current_year = datetime.now().year
         years = [str(year) for year in range(2021, current_year + 1)]
 
@@ -281,15 +348,13 @@ class MenuWidget(BaseDialog):
             selected_year_str = dialog.selectedItem()
             selected_year = int(selected_year_str)
 
-            # Show loading indicator and attempt to load layer
             if self.loading_dialog is None:
                 self.loading_dialog = LoadingDialog(self)
 
             self.setEnabled(False)
             self.loading_dialog.show()
-            QApplication.processEvents()  # Ensure loading dialog appears
+            QApplication.processEvents()
 
-            # Load Base Map
             add_basemap_global_osm(self.iface)
 
             layer = load_existing_layer(selected_wilker, selected_year)
@@ -311,8 +376,7 @@ class MenuWidget(BaseDialog):
                     self,
                     QMessageBox.Critical,
                     "Load Failed",
-                    f"Could not load the 'Existing' data for {selected_year}. "
-                    "Please check the database connection and verify that the data exists.",
+                    f"Could not load the 'Existing' data for {selected_year}. Please check the database connection and verify that the data exists.",
                 )
 
     def _load_and_apply_profile(self):
@@ -362,88 +426,6 @@ class MenuWidget(BaseDialog):
             QgsMessageLog.logMessage("User logged out.", "IDPMPlugin", Qgis.Info)
             self.accept()
 
-    def open_image_list(self, event=None):
-        selected_wilker = self._get_selected_wilker()
-        if not selected_wilker:
-            return
-
-        settings = QSettings()
-        token = settings.value("IDPMPlugin/token", None)
-        if not token:
-            ThemedMessageBox.show_message(
-                self,
-                QMessageBox.Critical,
-                "Authentication Error",
-                "You are not logged in.",
-            )
-            return
-
-        if self.loading_dialog is None:
-            self.loading_dialog = LoadingDialog(self)
-
-        self.setEnabled(False)
-        self.loading_dialog.show()
-
-        request = QNetworkRequest(
-            QUrl(f"{Config.API_URL}/geoportal/sentinel/catalog/{selected_wilker}")
-        )
-        request.setRawHeader(b"Authorization", f"Bearer {token}".encode())
-        self.network_manager.finished.connect(self.handle_image_list_response)
-        self.network_manager.get(request)
-
-    def handle_image_list_response(self, reply: QNetworkReply):
-        from .list_raster import ImageListDialog
-
-        self.setEnabled(True)
-        if self.loading_dialog:
-            self.loading_dialog.close()
-            self.loading_dialog.deleteLater()
-            self.loading_dialog = None
-
-        try:
-            self.network_manager.finished.disconnect(self.handle_image_list_response)
-        except TypeError:
-            pass
-
-        if reply.error():
-            ThemedMessageBox.show_message(
-                self,
-                QMessageBox.Critical,
-                "Error",
-                f"Failed to fetch image list: {reply.errorString()}",
-            )
-            reply.deleteLater()
-            return
-
-        response_data = reply.readAll()
-        reply.deleteLater()
-
-        try:
-            response = json.loads(response_data.data().decode("utf-8"))
-            features = response.get("data", {}).get("features", [])
-            if self.image_list_dialog:
-                self.image_list_dialog.close()
-            self.image_list_dialog = ImageListDialog(features, self.iface, parent=self)
-            saved_pos = self.pos()
-            self.hide()
-            self.image_list_dialog.exec_()
-            self.move(saved_pos)
-            self.show()
-        except json.JSONDecodeError:
-            ThemedMessageBox.show_message(
-                self,
-                QMessageBox.Critical,
-                "Error",
-                "Invalid JSON response for image list.",
-            )
-        except Exception as e:
-            ThemedMessageBox.show_message(
-                self,
-                QMessageBox.Critical,
-                "Error",
-                f"An unexpected error occurred: {e}",
-            )
-
     def apply_stylesheet(self) -> None:
         arrow_icon_path = os.path.join(
             Config.ASSETS_PATH, "images", "arrow-down.svg"
@@ -472,7 +454,6 @@ class MenuWidget(BaseDialog):
             #minimizeButton {{ font-size: 16px; padding-bottom: 5px; }}
             #maximizeButton {{ font-size: 16px; padding-top: 1px; }}
             #closeButton {{ font-size: 24px; padding-bottom: 2px; }}
-
             #minimizeButton:hover, #maximizeButton:hover, #closeButton:hover {{ background-color: rgba(255, 255, 255, 0.2); }}
             #minimizeButton:pressed, #maximizeButton:pressed, #closeButton:pressed {{ background-color: rgba(255, 255, 255, 0.1); }}
             

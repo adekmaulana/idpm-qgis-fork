@@ -1072,8 +1072,15 @@ class ImageListDialog(BaseDialog):
             #pageSubtitle {{ font-size: 14px; color: #808080; }}
             #backButton {{ background-color: transparent; color: #274423; border: none; font-size: 14px; padding: 8px; }}
             #backButton:hover {{ text-decoration: underline; }}
-            #minimizeButton, #maximizeButton, #closeButton {{ color: #274423; }}
-            #minimizeButton:hover, #maximizeButton:hover, #closeButton:hover {{ background-color: #E9ECEF; }}
+            #minimizeButton, #maximizeButton, #closeButton {{
+                background-color: transparent; color: #274423; border: none;
+                font-family: "Arial", sans-serif; font-weight: bold; border-radius: 4px;
+            }}
+            #minimizeButton {{ font-size: 16px; padding-bottom: 5px; }}
+            #maximizeButton {{ font-size: 16px; padding-top: 1px; }}
+            #closeButton {{ font-size: 24px; padding-bottom: 2px; }}
+            #minimizeButton:hover, #maximizeButton:hover, #closeButton:hover {{ background-color: rgba(255, 255, 255, 0.2); }}
+            #minimizeButton:pressed, #maximizeButton:pressed, #closeButton:pressed {{ background-color: rgba(255, 255, 255, 0.1); }}
             #rasterItem {{ 
                 background-color: #F8F9FA; 
                 border: none; 
