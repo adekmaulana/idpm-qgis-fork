@@ -984,7 +984,7 @@ class ImageListDialog(BaseDialog):
         )
         progress.setWindowModality(Qt.WindowModal)
 
-        task.progressChanged.connect(progress.setValue)
+        task.progressChanged.connect(lambda value: progress.setValue(int(value)))
         task.calculationFinished.connect(self._on_custom_calculation_finished)
         task.errorOccurred.connect(self._on_task_error)
         progress.canceled.connect(task.cancel)
@@ -1079,7 +1079,7 @@ class ImageListDialog(BaseDialog):
             f"Processing NDVI for {asset.stac_id}...", "Cancel", 0, 100, self
         )
         progress.setWindowModality(Qt.WindowModal)
-        task.progressChanged.connect(progress.setValue)
+        task.progressChanged.connect(lambda value: progress.setValue(int(value)))
         task.calculationFinished.connect(
             lambda path: self._on_ndvi_processing_finished(
                 path, asset.stac_id, style_items
@@ -1105,7 +1105,7 @@ class ImageListDialog(BaseDialog):
             f"Processing False Color for {asset.stac_id}...", "Cancel", 0, 100, self
         )
         progress.setWindowModality(Qt.WindowModal)
-        task.progressChanged.connect(progress.setValue)
+        task.progressChanged.connect(lambda value: progress.setValue(int(value)))
         task.calculationFinished.connect(
             lambda path: self._on_fc_processing_finished(path, asset.stac_id)
         )
