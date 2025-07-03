@@ -41,6 +41,7 @@ from ..config import Config
 from .base_dialog import BaseDialog
 from .ndvi_style_dialog import NdviStyleDialog
 from .raster_calculator_dialog import RasterCalculatorDialog
+from .spinner_widget import SpinnerWidget
 from ..core import NdviTask, FalseColorTask, RasterAsset, RasterCalculatorTask
 from ..core.database import add_basemap_global_osm
 from .themed_message_box import ThemedMessageBox
@@ -96,6 +97,7 @@ class RasterItemWidget(QWidget):
     customCalculationRequested = pyqtSignal(RasterAsset, str, str, dict)
     classifyCustomRequested = pyqtSignal(str, str)
     zoomToExtentRequested = pyqtSignal(dict)
+    cancelOperationRequested = pyqtSignal(str)  # stac_id
 
     def __init__(
         self,
@@ -123,8 +125,21 @@ class RasterItemWidget(QWidget):
 
         details_layout = QVBoxLayout()
         details_layout.setSpacing(4)
+
+        title_layout = QHBoxLayout()
         self.stac_id_label = QLabel(self.asset.stac_id)
         self.stac_id_label.setObjectName("rasterTitle")
+
+        self.spinner_widget = SpinnerWidget(self)
+        self.spinner_widget.setFixedSize(16, 16)
+
+        title_layout.addWidget(self.stac_id_label)
+        title_layout.addWidget(self.spinner_widget)
+        title_layout.addStretch()
+
+        details_layout.addLayout(title_layout)
+        details_layout.addStretch(1)
+
         date_str = "N/A"
         if self.asset.capture_date:
             date_str = self.asset.capture_date.strftime("%d %b %Y %H:%M:%S")
@@ -132,8 +147,7 @@ class RasterItemWidget(QWidget):
         published_label.setObjectName("rasterSubtitle")
         cloud_label = QLabel(f"Cloud Cover: {self.asset.cloud_cover:.2f}%")
         cloud_label.setObjectName("rasterCloud")
-        details_layout.addWidget(self.stac_id_label)
-        details_layout.addStretch(1)
+
         details_layout.addWidget(published_label)
         details_layout.addStretch(1)
         details_layout.addWidget(cloud_label)
@@ -154,7 +168,10 @@ class RasterItemWidget(QWidget):
         layout = QVBoxLayout()
         layout.setSpacing(10)
         layout.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        buttons_layout = QHBoxLayout()
+
+        self.buttons_widget = QWidget()
+        buttons_layout = QHBoxLayout(self.buttons_widget)
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
         buttons_layout.setSpacing(10)
 
         self.btn_visual = QPushButton()
@@ -176,10 +193,22 @@ class RasterItemWidget(QWidget):
         self.btn_calculator.setObjectName("actionButton")
         self.btn_calculator.clicked.connect(self._on_calculator_button_clicked)
         buttons_layout.addWidget(self.btn_calculator)
+        layout.addWidget(self.buttons_widget)
 
-        layout.addLayout(buttons_layout)
-        self.custom_outputs_layout = QVBoxLayout()
-        layout.addLayout(self.custom_outputs_layout)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setObjectName("cancelButton")
+        self.cancel_button.clicked.connect(
+            lambda: self.cancelOperationRequested.emit(self.asset.stac_id)
+        )
+        self.cancel_button.setVisible(False)
+        layout.addWidget(self.cancel_button, 0, Qt.AlignRight)
+
+        self.custom_outputs_container = QWidget()
+        self.custom_outputs_layout = QVBoxLayout(self.custom_outputs_container)
+        self.custom_outputs_layout.setContentsMargins(0, 5, 0, 0)
+        self.custom_outputs_layout.setSpacing(5)
+        layout.addWidget(self.custom_outputs_container)
+
         self.progress_bar_visual = self._create_progress_bar()
         layout.addWidget(self.progress_bar_visual)
         self.bands_progress_container = QWidget()
@@ -248,10 +277,6 @@ class RasterItemWidget(QWidget):
         if os.path.exists(visual_path) and os.path.getsize(visual_path) > 0:
             self.openVisualRequested.emit(self.asset)
         else:
-            self.set_buttons_enabled(False)
-            self.progress_bar_visual.setVisible(True)
-            self.status_label.setVisible(True)
-            self.status_label.setText("Downloading visual...")
             self.downloadVisualRequested.emit(self.asset)
 
     def _on_ndvi_button_clicked(self):
@@ -261,20 +286,12 @@ class RasterItemWidget(QWidget):
             style_dialog = NdviStyleDialog(self)
             if style_dialog.exec_() == QDialog.Accepted:
                 classification_items = style_dialog.get_classification_items()
-                self.set_buttons_enabled(False)
-                self.status_label.setVisible(True)
-                self.status_label.setText("Downloading bands for NDVI...")
-                self.bands_progress_container.setVisible(True)
                 self.processNdviRequested.emit(self.asset, classification_items)
 
     def _on_false_color_button_clicked(self):
         if self.btn_false_color.text() == "Open False Color":
             self.openFalseColorRequested.emit(self.asset)
         else:
-            self.set_buttons_enabled(False)
-            self.status_label.setVisible(True)
-            self.status_label.setText("Downloading bands for False Color...")
-            self.bands_progress_container.setVisible(True)
             self.processFalseColorRequested.emit(self.asset)
 
     def set_buttons_enabled(self, enabled: bool):
@@ -305,7 +322,6 @@ class RasterItemWidget(QWidget):
 
     def update_ui_based_on_local_files(self):
         """Updates UI based on local files and checks for ongoing operations."""
-        # --- 1. Set the text for all buttons unconditionally ---
         visual_path = self.asset.get_local_path("visual")
         if os.path.exists(visual_path) and os.path.getsize(visual_path) > 0:
             self.btn_visual.setText("Open Visual")
@@ -324,29 +340,39 @@ class RasterItemWidget(QWidget):
         else:
             self.btn_false_color.setText("Process False Color")
 
-        # --- 2. Reset UI state ---
         self.progress_bar_visual.setVisible(False)
         self.bands_progress_container.setVisible(False)
         self.progress_bar_nir.setVisible(False)
         self.progress_bar_red.setVisible(False)
         self.progress_bar_green.setVisible(False)
         self.status_label.setVisible(False)
+        self.buttons_widget.setVisible(True)
+        self.cancel_button.setVisible(False)
+        self.spinner_widget.setVisible(False)
         self.set_buttons_enabled(True)
+        self.custom_outputs_container.setVisible(True)  # Show by default
 
-        # --- 3. Check for active operations and override UI state if necessary ---
-        is_operation_active = False
+        active_op = None
         if self.dialog and hasattr(self.dialog, "active_operations"):
-            for op_key in self.dialog.active_operations.keys():
+            for op_key, op_data in self.dialog.active_operations.items():
                 if op_key.startswith(self.asset.stac_id):
-                    is_operation_active = True
+                    active_op = op_data
                     break
 
-        if is_operation_active:
-            self.set_buttons_enabled(False)
+        if active_op:
+            self.buttons_widget.setVisible(False)
+            self.cancel_button.setVisible(True)
+            self.spinner_widget.setVisible(True)
             self.status_label.setText("Operation in progress...")
             self.status_label.setVisible(True)
+            self.custom_outputs_container.setVisible(False)  # Hide custom outputs
+
+            op_type = active_op.get("type")
+            if op_type == "visual":
+                self.progress_bar_visual.setVisible(True)
+            elif op_type in ["ndvi", "false_color", "custom"]:
+                self.bands_progress_container.setVisible(True)
         else:
-            # --- 4. Set enabled state only if not in an active operation ---
             self.btn_ndvi.setEnabled(
                 bool(self.asset.nir_url) and bool(self.asset.red_url)
             )
@@ -358,19 +384,28 @@ class RasterItemWidget(QWidget):
             self.btn_calculator.setEnabled(
                 bool(self.asset.nir_url) and bool(self.asset.red_url)
             )
+            self._update_custom_output_buttons()
 
-        self._update_custom_output_buttons()
+    def _clear_layout(self, layout):
+        """Helper function to recursively clear a layout and delete its widgets."""
+        if layout is not None:
+            while layout.count():
+                item = layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+                else:
+                    self._clear_layout(item.layout())
 
     def _update_custom_output_buttons(self):
-        while self.custom_outputs_layout.count():
-            child = self.custom_outputs_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+        self._clear_layout(self.custom_outputs_layout)
 
         folder_path = os.path.join(Config.DOWNLOAD_DIR, self.asset.stac_id)
         if not os.path.isdir(folder_path):
+            self.custom_outputs_container.setVisible(False)
             return
 
+        has_custom_outputs = False
         for filename in os.listdir(folder_path):
             if filename.startswith(f"{self.asset.stac_id}_") and filename.endswith(
                 ".tif"
@@ -381,6 +416,8 @@ class RasterItemWidget(QWidget):
                     or "_Visual." in filename
                 ):
                     continue
+
+                has_custom_outputs = True
                 layer_name = filename.replace(f"{self.asset.stac_id}_", "").replace(
                     ".tif", ""
                 )
@@ -397,6 +434,8 @@ class RasterItemWidget(QWidget):
                 btn_layout.addWidget(label)
                 btn_layout.addWidget(btn_classify)
                 self.custom_outputs_layout.addLayout(btn_layout)
+
+        self.custom_outputs_container.setVisible(has_custom_outputs)
 
 
 class ImageListDialog(BaseDialog):
@@ -424,7 +463,8 @@ class ImageListDialog(BaseDialog):
         self.setWindowTitle("List Raster")
         main_layout = QVBoxLayout(self.main_container)
         main_layout.setContentsMargins(30, 10, 30, 30)
-        main_layout.addLayout(self._create_top_bar())
+        top_bar = self._create_top_bar()
+        main_layout.addLayout(top_bar)
         main_layout.addSpacing(20)
 
         header_layout = QHBoxLayout()
@@ -494,6 +534,7 @@ class ImageListDialog(BaseDialog):
             "← Back to Menu", objectName="backButton", cursor=Qt.PointingHandCursor
         )
         self.back_button.clicked.connect(self.accept)
+
         layout.addWidget(self.back_button)
         layout.addStretch()
         layout.addLayout(self._create_window_controls())
@@ -559,6 +600,9 @@ class ImageListDialog(BaseDialog):
                 self._handle_classify_custom_requested
             )
             item_widget.zoomToExtentRequested.connect(self._handle_zoom_to_extent)
+            item_widget.cancelOperationRequested.connect(
+                self._handle_cancel_operation_requested
+            )
             self.list_layout.insertWidget(self.list_layout.count() - 1, item_widget)
 
         total_pages = (
@@ -601,7 +645,7 @@ class ImageListDialog(BaseDialog):
                 if group := self.get_or_create_plugin_layer_group():
                     group.addLayer(layer)
         if not any(
-            layer.name().endswith(("_Visual", "_NDVI", "_FalseColor"))
+            layer.name().endswith(("_Visual", "_NDVI", "_FalseColor", "_Custom"))
             for layer in QgsProject.instance().mapLayers().values()
         ):
             indonesia_bbox = QgsRectangle(95.0, -11.0, 141.0, 6.0)
@@ -674,6 +718,8 @@ class ImageListDialog(BaseDialog):
             "completed": {},
             "asset": asset,
         }
+        if item_widget := self._get_item_widget(asset.stac_id):
+            item_widget.update_ui_based_on_local_files()
         self._start_download(
             asset, "visual", asset.visual_url, asset.get_local_path("visual"), op_key
         )
@@ -709,6 +755,8 @@ class ImageListDialog(BaseDialog):
             "style": classification_items,
             "asset": asset,
         }
+        if item_widget := self._get_item_widget(asset.stac_id):
+            item_widget.update_ui_based_on_local_files()
         for band_type, (url, save_path) in bands_to_download.items():
             if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
                 self._on_band_download_complete(op_key, band_type, save_path)
@@ -741,6 +789,8 @@ class ImageListDialog(BaseDialog):
             "completed": {},
             "asset": asset,
         }
+        if item_widget := self._get_item_widget(asset.stac_id):
+            item_widget.update_ui_based_on_local_files()
         for band_type, (url, save_path) in bands_to_download.items():
             if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
                 self._on_band_download_complete(op_key, band_type, save_path)
@@ -770,6 +820,13 @@ class ImageListDialog(BaseDialog):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         request = QNetworkRequest(QUrl(url))
         reply = self.download_network_manager.get(request)
+
+        if op_key in self.active_operations:
+            self.active_operations[op_key]["replies"] = self.active_operations[
+                op_key
+            ].get("replies", [])
+            self.active_operations[op_key]["replies"].append(reply)
+
         reply.setProperty("stac_id", asset.stac_id)
         reply.setProperty("band", band)
         reply.setProperty("save_path", save_path)
@@ -784,19 +841,31 @@ class ImageListDialog(BaseDialog):
 
     def _on_download_progress(self, bytes_received: int, bytes_total: int):
         reply = self.sender()
+        if not reply:
+            return
         stac_id = reply.property("stac_id")
         band = reply.property("band")
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_download_progress(bytes_received, bytes_total, band)
 
     def _on_download_finished(self, reply: QNetworkReply):
+        if not reply:
+            return
         stac_id = reply.property("stac_id")
         band = reply.property("band")
         save_path = reply.property("save_path")
         op_key = reply.property("op_key")
-        reply.property("file_handle").close()
 
-        if reply.error() != QNetworkReply.NoError:
+        if file_handle := reply.property("file_handle"):
+            file_handle.close()
+
+        if reply.error() == QNetworkReply.OperationCanceledError:
+            QgsMessageLog.logMessage(
+                f"Download canceled for {band} of {stac_id}", "IDPMPlugin", Qgis.Info
+            )
+            if os.path.exists(save_path):
+                os.remove(save_path)
+        elif reply.error() != QNetworkReply.NoError:
             ThemedMessageBox.show_message(
                 self,
                 QMessageBox.Critical,
@@ -847,12 +916,8 @@ class ImageListDialog(BaseDialog):
             "asset": asset,
         }
         if item_widget := self._get_item_widget(asset.stac_id):
-            item_widget.set_buttons_enabled(False)
-            item_widget.status_label.setText(
-                f"Downloading bands for '{output_name}'..."
-            )
-            item_widget.status_label.setVisible(True)
-            item_widget.bands_progress_container.setVisible(True)
+            item_widget.update_ui_based_on_local_files()
+
         for band_type, (url, save_path) in bands_to_download.items():
             if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
                 self._on_band_download_complete(op_key, band_type, save_path)
@@ -878,8 +943,6 @@ class ImageListDialog(BaseDialog):
                 if item_widget := self._get_item_widget(asset.stac_id):
                     item_widget.update_ui_based_on_local_files()
             elif op["type"] == "custom":
-                if item_widget := self._get_item_widget(asset.stac_id):
-                    item_widget.update_ui_based_on_local_files()
                 self._run_custom_calculation(
                     asset,
                     op["formula"],
@@ -904,9 +967,13 @@ class ImageListDialog(BaseDialog):
         folder_path = os.path.join(Config.DOWNLOAD_DIR, asset.stac_id)
         output_path = os.path.join(folder_path, f"{asset.stac_id}_{output_name}.tif")
 
+        op_key = f"{asset.stac_id}_{output_name}"
         task = RasterCalculatorTask(
             formula, band_paths, coefficients, output_path, asset.stac_id
         )
+
+        if op_key in self.active_operations:
+            self.active_operations[op_key]["task"] = task
 
         progress = QProgressDialog(
             f"Calculating '{output_name}' for {asset.stac_id}...",
@@ -952,12 +1019,42 @@ class ImageListDialog(BaseDialog):
                 None, layer_path, layer_name, classification_items=items
             )
 
+    def _handle_cancel_operation_requested(self, stac_id: str):
+        """Cancels an active operation for a given STAC ID."""
+        op_key_to_cancel = None
+        for key in self.active_operations:
+            if key.startswith(stac_id):
+                op_key_to_cancel = key
+                break
+
+        if op_key_to_cancel and op_key_to_cancel in self.active_operations:
+            op = self.active_operations[op_key_to_cancel]
+
+            # Cancel network replies
+            if "replies" in op:
+                for reply in op["replies"]:
+                    if reply.isRunning():
+                        reply.abort()
+
+            # Cancel background task
+            if "task" in op and op["task"]:
+                op["task"].cancel()
+
+            del self.active_operations[op_key_to_cancel]
+
+            if widget := self._get_item_widget(stac_id):
+                widget.update_ui_based_on_local_files()
+            QgsMessageLog.logMessage(
+                f"Operation {op_key_to_cancel} cancelled by user.",
+                "IDPMPlugin",
+                Qgis.Info,
+            )
+
     def _on_task_error(self, error_msg: str, stac_id: str):
         ThemedMessageBox.show_message(
             self, QMessageBox.Critical, "Processing Error", error_msg
         )
 
-        # Clean up any related active operations for the failed stac_id
         keys_to_remove = [
             key for key in self.active_operations if key.startswith(stac_id)
         ]
@@ -968,12 +1065,16 @@ class ImageListDialog(BaseDialog):
             item_widget.update_ui_based_on_local_files()
 
     def _calculate_ndvi(self, asset: RasterAsset, style_items: list):
+        op_key = f"{asset.stac_id}_ndvi"
         task = NdviTask(
             asset.get_local_path("red"),
             asset.get_local_path("nir"),
             os.path.dirname(asset.get_local_path("red")),
             asset.stac_id,
         )
+        if op_key in self.active_operations:
+            self.active_operations[op_key]["task"] = task
+
         progress = QProgressDialog(
             f"Processing NDVI for {asset.stac_id}...", "Cancel", 0, 100, self
         )
@@ -989,6 +1090,7 @@ class ImageListDialog(BaseDialog):
         QgsApplication.taskManager().addTask(task)
 
     def _calculate_false_color(self, asset: RasterAsset):
+        op_key = f"{asset.stac_id}_false_color"
         task = FalseColorTask(
             asset.get_local_path("nir"),
             asset.get_local_path("red"),
@@ -996,6 +1098,9 @@ class ImageListDialog(BaseDialog):
             os.path.dirname(asset.get_local_path("red")),
             asset.stac_id,
         )
+        if op_key in self.active_operations:
+            self.active_operations[op_key]["task"] = task
+
         progress = QProgressDialog(
             f"Processing False Color for {asset.stac_id}...", "Cancel", 0, 100, self
         )
@@ -1044,7 +1149,7 @@ class ImageListDialog(BaseDialog):
         asset = next((a for a in self.all_assets if a.stac_id == stac_id), None)
         if asset:
             layer = self._load_raster_into_qgis(
-                asset, fc_path, f"{stac_id}_FalseColor", is_false_color=True
+                asset, fc_path, f"{asset.stac_id}_FalseColor", is_false_color=True
             )
             if layer:
                 self._zoom_to_geometry(asset.geometry)
@@ -1126,6 +1231,11 @@ class ImageListDialog(BaseDialog):
             }
             #actionButton:hover { background-color: #F1F3F5; }
             #actionButton:disabled { background-color: #E9ECEF; color: #ADB5BD; border-color: #DEE2E6; }
+            #cancelButton {
+                background-color: #FFC55A; color: black; border: none;
+                padding: 4px 12px; border-radius: 6px; font-weight: bold;
+            }
+            #cancelButton:hover { background-color: #e0a800; }
             QScrollArea, #scrollAreaViewport, #scrollContent { border: none; background-color: #F8F9FA; }
             #paginationButton { background-color: white; color: #274423; border: 1px solid #274423; padding: 8px 16px; border-radius: 8px; }
             #paginationButton:disabled { background-color: #E9ECEF; color: #6C757D; border: 1px solid #CED4DA; }
@@ -1136,8 +1246,7 @@ class ImageListDialog(BaseDialog):
         self.setStyleSheet(qss)
 
     def closeEvent(self, event):
-        try:
-            self.download_network_manager.finished.disconnect()
-        except TypeError:
-            pass
+        # Cancel all active operations when the dialog is closed
+        for stac_id in list(self.active_operations.keys()):
+            self._handle_cancel_operation_requested(stac_id.split("_")[0])
         super().closeEvent(event)
