@@ -14,7 +14,7 @@ class RasterAsset:
     It centralizes property access and path management.
     """
 
-    properties: Dict[str, Any]
+    feature: Dict[str, Any]  # The GeoJSON feature containing the asset data
     stac_id: str = field(init=False)
     capture_date: Optional[datetime] = field(init=False)
     cloud_cover: float = field(init=False)
@@ -23,11 +23,24 @@ class RasterAsset:
     nir_url: Optional[str] = field(init=False)
     red_url: Optional[str] = field(init=False)
     green_url: Optional[str] = field(init=False)
+    properties: Dict[str, Any] = field(init=False)
+    geometry: Optional[Dict[str, Any]] = field(init=False)
 
     def __post_init__(self):
         """
         Initializes calculated fields after the main dataclass initialization.
         """
+        self.properties = self.feature.get("properties", {})
+        if not self.properties:
+            QgsMessageLog.logMessage(
+                "RasterAsset initialized with empty properties.",
+                "IDPMPlugin",
+                Qgis.Warning,
+            )
+
+        # Parse the geometry from the feature
+        self.geometry = self.feature.get("geometry")
+
         self.stac_id = self.properties.get("stac_id", "UNKNOWN")
         self.cloud_cover = float(self.properties.get("cloud", 0.0))
         self.thumbnail_url = self.properties.get("thumb")

@@ -55,15 +55,23 @@ from .themed_message_box import ThemedMessageBox
 
 
 class RoundedImageLabel(QLabel):
+    clicked = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pixmap = QPixmap()
         self.radius = 8
         self.placeholder_color = QColor(0, 0, 0, 51)
+        self.setCursor(Qt.PointingHandCursor)
 
     def setPixmap(self, pixmap: QPixmap):
         self._pixmap = pixmap
         self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -91,6 +99,7 @@ class RasterItemWidget(QWidget):
     openFalseColorRequested = pyqtSignal(RasterAsset)
     customCalculationRequested = pyqtSignal(RasterAsset, str, str, dict)
     classifyCustomRequested = pyqtSignal(str, str)
+    zoomToExtentRequested = pyqtSignal(dict)
 
     def __init__(self, asset: RasterAsset, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -105,6 +114,7 @@ class RasterItemWidget(QWidget):
         main_layout.setSpacing(15)
         self.thumb_label = RoundedImageLabel()
         self.thumb_label.setFixedSize(202, 148)
+        self.thumb_label.clicked.connect(self._on_thumbnail_clicked)
         main_layout.addWidget(self.thumb_label)
         self.load_thumbnail()
         details_layout = QVBoxLayout()
@@ -129,6 +139,10 @@ class RasterItemWidget(QWidget):
         right_column_layout = self._create_actions_layout()
         main_layout.addLayout(right_column_layout)
         self.update_ui_based_on_local_files()
+
+    def _on_thumbnail_clicked(self):
+        if self.asset.geometry:
+            self.zoomToExtentRequested.emit(self.asset.geometry)
 
     def _create_actions_layout(self) -> QVBoxLayout:
         layout = QVBoxLayout()
@@ -381,9 +395,7 @@ class ImageListDialog(BaseDialog):
     ):
         super().__init__(parent)
         self.iface = iface
-        self.all_assets = [
-            RasterAsset(f.get("properties", {})) for f in data if "properties" in f
-        ]
+        self.all_assets = [RasterAsset(feature) for feature in data]
         self.filtered_assets: List[RasterAsset] = []
         self.download_network_manager = QNetworkAccessManager(self)
         self.active_operations: Dict[str, Any] = {}
@@ -536,6 +548,7 @@ class ImageListDialog(BaseDialog):
             item_widget.classifyCustomRequested.connect(
                 self._handle_classify_custom_requested
             )
+            item_widget.zoomToExtentRequested.connect(self._handle_zoom_to_extent)
             self.list_layout.insertWidget(self.list_layout.count() - 1, item_widget)
 
         total_pages = (
@@ -597,6 +610,37 @@ class ImageListDialog(BaseDialog):
             if isinstance(widget, RasterItemWidget) and widget.asset.stac_id == stac_id:
                 return widget
         return None
+
+    def _handle_zoom_to_extent(self, geometry_dict: dict):
+        if not geometry_dict or "coordinates" not in geometry_dict:
+            return
+
+        try:
+            coords = geometry_dict["coordinates"][0]
+            if not coords:
+                return
+
+            x_coords = [p[0] for p in coords]
+            y_coords = [p[1] for p in coords]
+            bbox = QgsRectangle(
+                min(x_coords), min(y_coords), max(x_coords), max(y_coords)
+            )
+
+            source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
+            dest_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+
+            transform = QgsCoordinateTransform(
+                source_crs, dest_crs, QgsProject.instance()
+            )
+            bbox_transformed = transform.transform(bbox)
+
+            self.iface.mapCanvas().setExtent(bbox_transformed)
+            self.iface.mapCanvas().refresh()
+
+        except (IndexError, TypeError, Exception) as e:
+            QgsMessageLog.logMessage(
+                f"Could not zoom to extent. Error: {e}", "IDPMPlugin", Qgis.Warning
+            )
 
     def _handle_download_visual_requested(self, asset: RasterAsset):
         if not asset.visual_url:
