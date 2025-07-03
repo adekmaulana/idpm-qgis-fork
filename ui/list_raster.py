@@ -18,7 +18,6 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
 )
-from qgis.analysis import QgsRasterCalculator, QgsRasterCalculatorEntry
 
 from PyQt5.QtWidgets import (
     QWidget,
@@ -42,7 +41,7 @@ from ..config import Config
 from .base_dialog import BaseDialog
 from .ndvi_style_dialog import NdviStyleDialog
 from .raster_calculator_dialog import RasterCalculatorDialog
-from ..core import NdviTask, FalseColorTask, RasterAsset
+from ..core import NdviTask, FalseColorTask, RasterAsset, RasterCalculatorTask
 from ..core.database import add_basemap_global_osm
 from .themed_message_box import ThemedMessageBox
 
@@ -879,8 +878,6 @@ class ImageListDialog(BaseDialog):
                 if item_widget := self._get_item_widget(asset.stac_id):
                     item_widget.update_ui_based_on_local_files()
             elif op["type"] == "custom":
-                if op_key in self.active_operations:
-                    del self.active_operations[op_key]
                 if item_widget := self._get_item_widget(asset.stac_id):
                     item_widget.update_ui_based_on_local_files()
                 self._run_custom_calculation(
@@ -903,69 +900,46 @@ class ImageListDialog(BaseDialog):
         band_paths: dict,
         coefficients: dict,
     ):
+        """Runs the custom raster calculation in a background task."""
         folder_path = os.path.join(Config.DOWNLOAD_DIR, asset.stac_id)
         output_path = os.path.join(folder_path, f"{asset.stac_id}_{output_name}.tif")
-        entries = []
-        ref_layer = None
-        layers_to_keep_alive = []
-        for band_name, path in band_paths.items():
-            layer = QgsRasterLayer(path, band_name)
-            if not layer.isValid():
-                self._on_task_error(
-                    f"Could not load band: {band_name}", output_name, asset.stac_id
-                )
-                return
-            layers_to_keep_alive.append(layer)
-            entry = QgsRasterCalculatorEntry()
-            entry.ref = f"{band_name}@1"
-            entry.raster = layer
-            entry.bandNumber = 1
-            entries.append(entry)
-            if ref_layer is None:
-                ref_layer = layer
-        if not ref_layer:
-            self._on_task_error(
-                "No valid reference layer for calculation.", output_name, asset.stac_id
-            )
-            return
-        calc_formula = formula
-        for band_name in band_paths.keys():
-            calc_formula = calc_formula.replace(band_name, f'"{band_name}@1"')
-        for coeff_name, coeff_value in coefficients.items():
-            calc_formula = calc_formula.replace(coeff_name, str(coeff_value))
-        calc = QgsRasterCalculator(
-            calc_formula,
-            output_path,
-            "GTiff",
-            ref_layer.extent(),
-            ref_layer.width(),
-            ref_layer.height(),
-            entries,
+
+        task = RasterCalculatorTask(
+            formula, band_paths, coefficients, output_path, asset.stac_id
         )
-        result = calc.processCalculation()
-        if result == QgsRasterCalculator.Success:
-            self._on_custom_calculation_finished(
-                output_path, output_name, asset.stac_id
-            )
-        else:
-            self._on_task_error(
-                f"Raster calculation failed with error code: {result}",
-                output_name,
-                asset.stac_id,
-            )
+
+        progress = QProgressDialog(
+            f"Calculating '{output_name}' for {asset.stac_id}...",
+            "Cancel",
+            0,
+            100,
+            self,
+        )
+        progress.setWindowModality(Qt.WindowModal)
+
+        task.progressChanged.connect(progress.setValue)
+        task.calculationFinished.connect(self._on_custom_calculation_finished)
+        task.errorOccurred.connect(self._on_task_error)
+        progress.canceled.connect(task.cancel)
+
+        QgsApplication.taskManager().addTask(task)
 
     def _on_custom_calculation_finished(self, path: str, name: str, stac_id: str):
+        op_key = f"{stac_id}_{name}"
+        if op_key in self.active_operations:
+            del self.active_operations[op_key]
+
         ThemedMessageBox.show_message(
             self,
             QMessageBox.Information,
             "Calculation Complete",
             f"Successfully created '{name}'.",
         )
-        layer = self._load_raster_into_qgis(None, path, name)
-        if layer:
-            asset = next((a for a in self.all_assets if a.stac_id == stac_id), None)
-            if asset:
-                self._zoom_to_geometry(asset.geometry)
+        asset = next((a for a in self.all_assets if a.stac_id == stac_id), None)
+        layer = self._load_raster_into_qgis(asset, path, name)
+        if layer and asset:
+            self._zoom_to_geometry(asset.geometry)
+
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
 
@@ -978,25 +952,17 @@ class ImageListDialog(BaseDialog):
                 None, layer_path, layer_name, classification_items=items
             )
 
-    def _on_task_error(
-        self, error_msg: str, task_name: str, stac_id: Optional[str] = None
-    ):
+    def _on_task_error(self, error_msg: str, stac_id: str):
         ThemedMessageBox.show_message(
-            self,
-            QMessageBox.Critical,
-            "Error",
-            f"Failed to process '{task_name}': {error_msg}",
+            self, QMessageBox.Critical, "Processing Error", error_msg
         )
-        if not stac_id:
-            return
 
-        op_key_ndvi = f"{stac_id}_ndvi"
-        if op_key_ndvi in self.active_operations:
-            del self.active_operations[op_key_ndvi]
-
-        op_key_fc = f"{stac_id}_false_color"
-        if op_key_fc in self.active_operations:
-            del self.active_operations[op_key_fc]
+        # Clean up any related active operations for the failed stac_id
+        keys_to_remove = [
+            key for key in self.active_operations if key.startswith(stac_id)
+        ]
+        for key in keys_to_remove:
+            del self.active_operations[key]
 
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
@@ -1018,9 +984,7 @@ class ImageListDialog(BaseDialog):
                 path, asset.stac_id, style_items
             )
         )
-        task.errorOccurred.connect(
-            lambda err: self._on_task_error(err, "NDVI", asset.stac_id)
-        )
+        task.errorOccurred.connect(lambda err: self._on_task_error(err, asset.stac_id))
         progress.canceled.connect(task.cancel)
         QgsApplication.taskManager().addTask(task)
 
@@ -1040,9 +1004,7 @@ class ImageListDialog(BaseDialog):
         task.calculationFinished.connect(
             lambda path: self._on_fc_processing_finished(path, asset.stac_id)
         )
-        task.errorOccurred.connect(
-            lambda err: self._on_task_error(err, "False Color", asset.stac_id)
-        )
+        task.errorOccurred.connect(lambda err: self._on_task_error(err, asset.stac_id))
         progress.canceled.connect(task.cancel)
         QgsApplication.taskManager().addTask(task)
 
