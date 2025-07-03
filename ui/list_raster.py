@@ -622,30 +622,39 @@ class ImageListDialog(BaseDialog):
                 return widget
         return None
 
-    def _handle_zoom_to_extent(self, geometry_dict: dict):
+    def _zoom_to_geometry(self, geometry_dict: Optional[Dict[str, Any]]):
+        """Zooms the map canvas to the extent of a given geometry dictionary."""
         if not geometry_dict or "coordinates" not in geometry_dict:
             return
+
         try:
             coords = geometry_dict["coordinates"][0]
             if not coords:
                 return
+
             x_coords = [p[0] for p in coords]
             y_coords = [p[1] for p in coords]
             bbox = QgsRectangle(
                 min(x_coords), min(y_coords), max(x_coords), max(y_coords)
             )
+
             source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
             dest_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+
             transform = QgsCoordinateTransform(
                 source_crs, dest_crs, QgsProject.instance()
             )
             bbox_transformed = transform.transform(bbox)
+
             self.iface.mapCanvas().setExtent(bbox_transformed)
             self.iface.mapCanvas().refresh()
         except (IndexError, TypeError, Exception) as e:
             QgsMessageLog.logMessage(
-                f"Could not zoom to extent. Error: {e}", "IDPMPlugin", Qgis.Warning
+                f"Could not zoom to geometry. Error: {e}", "IDPMPlugin", Qgis.Warning
             )
+
+    def _handle_zoom_to_extent(self, geometry_dict: dict):
+        self._zoom_to_geometry(geometry_dict)
 
     def _handle_download_visual_requested(self, asset: RasterAsset):
         if not asset.visual_url:
@@ -675,8 +684,7 @@ class ImageListDialog(BaseDialog):
             asset, asset.get_local_path("visual"), f"{asset.stac_id}_Visual"
         )
         if layer:
-            self.iface.mapCanvas().setExtent(layer.extent())
-            self.iface.mapCanvas().refresh()
+            self._zoom_to_geometry(asset.geometry)
 
     def _handle_process_ndvi_requested(
         self, asset: RasterAsset, classification_items: list
@@ -748,16 +756,14 @@ class ImageListDialog(BaseDialog):
                 asset, asset.get_local_path("ndvi"), items
             )
             if layer:
-                self.iface.mapCanvas().setExtent(layer.extent())
-                self.iface.mapCanvas().refresh()
+                self._zoom_to_geometry(asset.geometry)
 
     def _handle_open_false_color_requested(self, asset: RasterAsset):
         path = asset.get_local_path("false_color")
         name = f"{asset.stac_id}_FalseColor"
         layer = self._load_raster_into_qgis(asset, path, name, is_false_color=True)
         if layer:
-            self.iface.mapCanvas().setExtent(layer.extent())
-            self.iface.mapCanvas().refresh()
+            self._zoom_to_geometry(asset.geometry)
 
     def _start_download(
         self, asset: RasterAsset, band: str, url: str, save_path: str, op_key: str
@@ -869,7 +875,7 @@ class ImageListDialog(BaseDialog):
                     asset, save_path, f"{asset.stac_id}_Visual"
                 )
                 if layer:
-                    self.iface.mapCanvas().setExtent(layer.extent())
+                    self._zoom_to_geometry(asset.geometry)
                 if item_widget := self._get_item_widget(asset.stac_id):
                     item_widget.update_ui_based_on_local_files()
             elif op["type"] == "custom":
@@ -955,7 +961,11 @@ class ImageListDialog(BaseDialog):
             "Calculation Complete",
             f"Successfully created '{name}'.",
         )
-        self._load_raster_into_qgis(None, path, name)
+        layer = self._load_raster_into_qgis(None, path, name)
+        if layer:
+            asset = next((a for a in self.all_assets if a.stac_id == stac_id), None)
+            if asset:
+                self._zoom_to_geometry(asset.geometry)
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
 
@@ -1053,7 +1063,7 @@ class ImageListDialog(BaseDialog):
         if asset:
             layer = self._load_ndvi_into_qgis_layer(asset, ndvi_path, style_items)
             if layer:
-                self.iface.mapCanvas().setExtent(layer.extent())
+                self._zoom_to_geometry(asset.geometry)
 
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
@@ -1075,7 +1085,7 @@ class ImageListDialog(BaseDialog):
                 asset, fc_path, f"{stac_id}_FalseColor", is_false_color=True
             )
             if layer:
-                self.iface.mapCanvas().setExtent(layer.extent())
+                self._zoom_to_geometry(asset.geometry)
 
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
