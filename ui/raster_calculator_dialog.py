@@ -1,3 +1,5 @@
+# idpm-qgis/ui/raster_calculator_dialog.py
+
 import re
 from typing import Optional, List, Tuple, Dict
 from PyQt5.QtWidgets import (
@@ -36,10 +38,16 @@ class RasterCalculatorDialog(QDialog):
 
         # --- Formula Presets and History ---
         self.presets = {
-            "GNDVI (Green NDVI)": "(nir - green) / (nir + green)",
-            "NDWI (Water Index)": "(green - nir) / (green + nir)",
-            "SAVI (Soil-Adjusted)": "((nir - red) / (nir + red + L)) * (1.0 + L)",
-            "EVI (Enhanced)": "G * ((nir - red) / (nir + C1 * red - C2 * blue + L))",
+            "GNDVI (Green NDVI)": ("(nir - green) / (nir + green)", ""),
+            "NDWI (Water Index)": ("(green - nir) / (green + nir)", ""),
+            "SAVI (Soil-Adjusted)": (
+                "((nir - red) / (nir + red + L)) * (1.0 + L)",
+                "L = 0.5",
+            ),
+            "EVI (Enhanced)": (
+                "G * ((nir - red) / (nir + C1 * red - C2 * blue + L))",
+                "G = 2.5\nL = 1.0\nC1 = 6.0\nC2 = 7.5",
+            ),
         }
         self.history_settings_key = "IDPMPlugin/calculatorHistory"
         self.history = self._load_history()
@@ -120,8 +128,8 @@ class RasterCalculatorDialog(QDialog):
         header_item = self.presets_combo.model().item(self.presets_combo.count() - 1)
         header_item.setText("--- PRESETS ---")
         header_item.setEnabled(False)
-        for name, formula in self.presets.items():
-            self.presets_combo.addItem(name, userData=formula)
+        for name, data in self.presets.items():
+            self.presets_combo.addItem(name, userData=data)
 
         # Add History
         if self.history:
@@ -132,9 +140,8 @@ class RasterCalculatorDialog(QDialog):
             header_item.setText("--- HISTORY ---")
             header_item.setEnabled(False)
             for formula in self.history:
-                # Show a truncated version in the dropdown for readability
                 display_text = formula if len(formula) < 40 else formula[:37] + "..."
-                self.presets_combo.addItem(display_text, userData=formula)
+                self.presets_combo.addItem(display_text, userData=(formula, ""))
 
         self.presets_combo.blockSignals(False)
 
@@ -144,10 +151,12 @@ class RasterCalculatorDialog(QDialog):
 
     def _on_preset_selected(self, index: int):
         """Applies the selected preset/history formula to the input field."""
-        formula = self.presets_combo.itemData(index)
-        if formula:
+        data = self.presets_combo.itemData(index)
+        if data:
+            formula, default_coeffs = data
             self.formula_input.setText(formula)
-            self.presets_combo.setCurrentIndex(0)  # Reset combo after selection
+            self.coeffs_input.setText(default_coeffs)
+            self.presets_combo.setCurrentIndex(0)
 
     def _validate_formula(self, text: str):
         """Performs real-time syntax validation on the formula input."""
