@@ -218,9 +218,11 @@ class RasterItemWidget(QWidget):
         self.progress_bar_nir = self._create_progress_bar()
         self.progress_bar_red = self._create_progress_bar()
         self.progress_bar_green = self._create_progress_bar()
+        self.progress_bar_blue = self._create_progress_bar()
         bands_progress_layout.addWidget(self.progress_bar_nir)
         bands_progress_layout.addWidget(self.progress_bar_red)
         bands_progress_layout.addWidget(self.progress_bar_green)
+        bands_progress_layout.addWidget(self.progress_bar_blue)
         layout.addWidget(self.bands_progress_container)
 
         self.status_label = QLabel("")
@@ -239,6 +241,8 @@ class RasterItemWidget(QWidget):
             available_bands.append("red")
         if self.asset.green_url:
             available_bands.append("green")
+        if self.asset.blue_url:
+            available_bands.append("blue")
 
         dialog = RasterCalculatorDialog(available_bands, self)
         if dialog.exec_() == QDialog.Accepted:
@@ -314,6 +318,8 @@ class RasterItemWidget(QWidget):
                 pbar = self.progress_bar_red
             elif band == "green":
                 pbar = self.progress_bar_green
+            elif band == "blue":
+                pbar = self.progress_bar_blue
 
             if pbar:
                 pbar.setVisible(True)
@@ -345,6 +351,7 @@ class RasterItemWidget(QWidget):
         self.progress_bar_nir.setVisible(False)
         self.progress_bar_red.setVisible(False)
         self.progress_bar_green.setVisible(False)
+        self.progress_bar_blue.setVisible(False)
         self.status_label.setVisible(False)
         self.buttons_widget.setVisible(True)
         self.cancel_button.setVisible(False)
