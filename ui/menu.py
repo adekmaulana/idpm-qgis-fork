@@ -29,7 +29,8 @@ from .profile import ProfileDialog
 from .loading import LoadingDialog
 from .custom_input_dialog import CustomInputDialog
 from .themed_message_box import ThemedMessageBox
-from ..core.database import add_basemap_global_osm, load_existing_layer
+from ..core.database import load_existing_layer
+from ..core.util import add_basemap_global_osm
 
 
 class ActionCard(QWidget):

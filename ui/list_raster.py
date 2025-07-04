@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (
     QFrame,
 )
 from PyQt5.QtGui import QPixmap, QPainter, QPainterPath, QBrush, QColor
-from PyQt5.QtCore import Qt, QUrl, QRectF, pyqtSignal
+from PyQt5.QtCore import QTimer, Qt, QUrl, QRectF, pyqtSignal
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 from ..config import Config
@@ -43,7 +43,7 @@ from .ndvi_style_dialog import NdviStyleDialog
 from .raster_calculator_dialog import RasterCalculatorDialog
 from .spinner_widget import SpinnerWidget
 from ..core import NdviTask, FalseColorTask, RasterAsset, RasterCalculatorTask
-from ..core.database import add_basemap_global_osm
+from ..core.util import add_basemap_global_osm
 from .themed_message_box import ThemedMessageBox
 
 
@@ -457,7 +457,9 @@ class ImageListDialog(BaseDialog):
         self.items_per_page = 5
         self.init_list_ui()
         self._apply_filters()
-        add_basemap_global_osm(self.iface)
+        add_basemap_global_osm(
+            self.iface, zoom=False
+        )  # We handle the zoom in showEvent
 
     def init_list_ui(self):
         self.setWindowTitle("List Raster")
@@ -634,29 +636,6 @@ class ImageListDialog(BaseDialog):
         if group_node is None:
             group_node = root.addGroup(Config.IDPM_PLUGIN_GROUP_NAME)
         return group_node
-
-    def add_basemap_global_osm(self, iface: QgisInterface):
-        layer_name = "OpenStreetMap (IDPM Basemap)"
-        if not QgsProject.instance().mapLayersByName(layer_name):
-            url = "type=xyz&url=https://a.tile.openstreetmap.org/{z}/{x}/{y}.png&zmax=19&zmin=0&cache=yes&max-age=2592000"
-            layer = QgsRasterLayer(url, layer_name, "wms")
-            if layer.isValid():
-                QgsProject.instance().addMapLayer(layer, False)
-                if group := self.get_or_create_plugin_layer_group():
-                    group.addLayer(layer)
-        if not any(
-            layer.name().endswith(("_Visual", "_NDVI", "_FalseColor", "_Custom"))
-            for layer in QgsProject.instance().mapLayers().values()
-        ):
-            indonesia_bbox = QgsRectangle(95.0, -11.0, 141.0, 6.0)
-            dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")
-            source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
-            transform = QgsCoordinateTransform(
-                source_crs, dest_crs, QgsProject.instance()
-            )
-            indonesia_bbox_transformed = transform.transform(indonesia_bbox)
-            iface.mapCanvas().setExtent(indonesia_bbox_transformed)
-            iface.mapCanvas().refresh()
 
     def _get_item_widget(self, stac_id: str) -> Optional[RasterItemWidget]:
         for i in range(self.list_layout.count()):
@@ -1250,3 +1229,26 @@ class ImageListDialog(BaseDialog):
         for stac_id in list(self.active_operations.keys()):
             self._handle_cancel_operation_requested(stac_id.split("_")[0])
         super().closeEvent(event)
+
+    def showEvent(self, event):
+        """Overrides QDialog.showEvent to perform actions when the dialog is shown."""
+        super().showEvent(event)
+
+        def do_initial_zoom():
+            """Performs the initial zoom to Indonesia if no other layers are present."""
+            if not any(
+                layer.name().endswith(("_Visual", "_NDVI", "_FalseColor", "_Custom"))
+                for layer in QgsProject.instance().mapLayers().values()
+            ):
+                indonesia_bbox = QgsRectangle(95.0, -11.0, 141.0, 6.0)
+                dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")
+                source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
+                transform = QgsCoordinateTransform(
+                    source_crs, dest_crs, QgsProject.instance()
+                )
+                indonesia_bbox_transformed = transform.transform(indonesia_bbox)
+                self.iface.mapCanvas().setExtent(indonesia_bbox_transformed)
+                self.iface.mapCanvas().refresh()
+
+        # Use a single-shot timer to ensure the zoom happens after the event loop is idle
+        QTimer.singleShot(0, do_initial_zoom)

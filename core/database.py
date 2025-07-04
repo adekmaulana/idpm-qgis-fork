@@ -3,17 +3,12 @@ from qgis.core import (
     QgsVectorLayer,
     QgsDataSourceUri,
     QgsProject,
-    QgsRasterLayer,
     Qgis,
     QgsMessageLog,
-    QgsLayerTreeGroup,
-    QgsRectangle,
-    QgsCoordinateReferenceSystem,
-    QgsCoordinateTransform,
 )
-from qgis.gui import QgisInterface
 
 from ..config import Config
+from ..core.util import get_or_create_plugin_layer_group
 
 
 def create_db_uri(
@@ -72,69 +67,6 @@ def get_existing_qc_table_name(year: int) -> str:
     Returns the table name for the 'Existing QC' layer, e.g., 'eksisting_2024_qc'.
     """
     return f"eksisting_{year}_qc"
-
-
-def get_or_create_plugin_layer_group() -> Optional[QgsLayerTreeGroup]:
-    """Finds or creates the main layer group for this plugin."""
-    project = QgsProject.instance()
-    root = project.layerTreeRoot()
-    if not root:
-        return None
-    group_node = root.findGroup(Config.IDPM_PLUGIN_GROUP_NAME)
-    if group_node is None:
-        group_node = root.addGroup(Config.IDPM_PLUGIN_GROUP_NAME)
-    return group_node
-
-
-def add_basemap_global_osm(iface: QgisInterface) -> Optional[QgsRasterLayer]:
-    """
-    Adds OpenStreetMap as a basemap layer and zooms to Indonesia's extent
-    if no other project layers are present. This version enables caching.
-    """
-    layer_name = "OpenStreetMap (IDPM Basemap)"
-    plugin_group = get_or_create_plugin_layer_group()
-    basemap_layer = None
-
-    # Check if basemap already exists in the group
-    if plugin_group:
-        for child_node in plugin_group.children():
-            if hasattr(child_node, "name") and child_node.name() == layer_name:
-                basemap_layer = child_node.layer()
-                break
-
-    if basemap_layer is None:
-        # Added cache=yes and max-age parameters to the URL
-        # max-age is in seconds (30 days = 2592000 seconds)
-        url = "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        layer_source = f"type=xyz&url={url}&zmax=19&zmin=0&cache=yes&max-age=2592000"
-        basemap_layer = QgsRasterLayer(layer_source, layer_name, "wms")
-
-        if basemap_layer.isValid():
-            QgsProject.instance().addMapLayer(basemap_layer, False)
-            if plugin_group:
-                # Add to the bottom of the group
-                plugin_group.insertLayer(-1, basemap_layer)
-            else:
-                QgsProject.instance().addMapLayer(basemap_layer, True)
-        else:
-            QgsMessageLog.logMessage(
-                f"Failed to load basemap '{layer_name}'. Error: {basemap_layer.error().summary()}",
-                "IDPMPlugin",
-                Qgis.Critical,
-            )
-            return None
-
-    # Zoom to Indonesia extent only if there are no other layers apart from the basemap
-    if len(QgsProject.instance().mapLayers()) <= 1:
-        indonesia_bbox = QgsRectangle(95.0, -11.0, 141.0, 6.0)
-        dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")
-        source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
-        transform = QgsCoordinateTransform(source_crs, dest_crs, QgsProject.instance())
-        indonesia_bbox_transformed = transform.transform(indonesia_bbox)
-        iface.mapCanvas().setExtent(indonesia_bbox_transformed)
-        iface.mapCanvas().refresh()
-
-    return basemap_layer
 
 
 def load_existing_layer(wilker_name: str, year: int) -> Optional[QgsVectorLayer]:
