@@ -26,7 +26,7 @@ class RasterCalculatorDialog(QDialog):
 
     def __init__(self, available_bands: List[str], parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setWindowTitle("Raster Calculator")
+        self.setWindowTitle("Raster Custom Algorithms")
         self.setMinimumWidth(550)
 
         self.available_bands = available_bands
