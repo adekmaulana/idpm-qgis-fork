@@ -17,6 +17,7 @@ from qgis.core import (
     QgsRectangle,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
+    QgsGeometry,
 )
 
 from PyQt5.QtWidgets import (
@@ -42,6 +43,7 @@ from .base_dialog import BaseDialog
 from .ndvi_style_dialog import NdviStyleDialog
 from .raster_calculator_dialog import RasterCalculatorDialog
 from .spinner_widget import SpinnerWidget
+from .aoi_map_tool import AoiMapTool
 from ..core import NdviTask, FalseColorTask, RasterAsset, RasterCalculatorTask
 from ..core.util import add_basemap_global_osm
 from .themed_message_box import ThemedMessageBox
@@ -97,7 +99,8 @@ class RasterItemWidget(QWidget):
     customCalculationRequested = pyqtSignal(RasterAsset, str, str, dict)
     classifyCustomRequested = pyqtSignal(str, str)
     zoomToExtentRequested = pyqtSignal(dict)
-    cancelOperationRequested = pyqtSignal(str)  # stac_id
+    cancelOperationRequested = pyqtSignal(str)
+    selectAoiRequested = pyqtSignal(RasterAsset)
 
     def __init__(
         self,
@@ -194,6 +197,14 @@ class RasterItemWidget(QWidget):
         self.btn_calculator.clicked.connect(self._on_calculator_button_clicked)
         buttons_layout.addWidget(self.btn_calculator)
         layout.addWidget(self.buttons_widget)
+
+        self.btn_select_aoi = QPushButton("Select AOI")
+        self.btn_select_aoi.setObjectName("actionButton")
+        self.btn_select_aoi.clicked.connect(
+            lambda: self.selectAoiRequested.emit(self.asset)
+        )
+        self.btn_select_aoi.setVisible(False)
+        layout.addWidget(self.btn_select_aoi, 0, Qt.AlignRight)
 
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setObjectName("cancelButton")
@@ -337,8 +348,10 @@ class RasterItemWidget(QWidget):
         ndvi_path = self.asset.get_local_path("ndvi")
         if os.path.exists(ndvi_path) and os.path.getsize(ndvi_path) > 0:
             self.btn_ndvi.setText("Open NDVI")
+            self.btn_select_aoi.setVisible(True)
         else:
             self.btn_ndvi.setText("Process NDVI")
+            self.btn_select_aoi.setVisible(False)
 
         fc_path = self.asset.get_local_path("false_color")
         if os.path.exists(fc_path) and os.path.getsize(fc_path) > 0:
@@ -357,7 +370,7 @@ class RasterItemWidget(QWidget):
         self.cancel_button.setVisible(False)
         self.spinner_widget.setVisible(False)
         self.set_buttons_enabled(True)
-        self.custom_outputs_container.setVisible(True)  # Show by default
+        self.custom_outputs_container.setVisible(True)
 
         active_op = None
         if self.dialog and hasattr(self.dialog, "active_operations"):
@@ -368,11 +381,12 @@ class RasterItemWidget(QWidget):
 
         if active_op:
             self.buttons_widget.setVisible(False)
+            self.btn_select_aoi.setVisible(False)
             self.cancel_button.setVisible(True)
             self.spinner_widget.setVisible(True)
             self.status_label.setText("Operation in progress...")
             self.status_label.setVisible(True)
-            self.custom_outputs_container.setVisible(False)  # Hide custom outputs
+            self.custom_outputs_container.setVisible(False)
 
             op_type = active_op.get("type")
             if op_type == "visual":
@@ -394,7 +408,6 @@ class RasterItemWidget(QWidget):
             self._update_custom_output_buttons()
 
     def _clear_layout(self, layout):
-        """Helper function to recursively clear a layout and delete its widgets."""
         if layout is not None:
             while layout.count():
                 item = layout.takeAt(0)
@@ -406,12 +419,10 @@ class RasterItemWidget(QWidget):
 
     def _update_custom_output_buttons(self):
         self._clear_layout(self.custom_outputs_layout)
-
         folder_path = os.path.join(Config.DOWNLOAD_DIR, self.asset.stac_id)
         if not os.path.isdir(folder_path):
             self.custom_outputs_container.setVisible(False)
             return
-
         has_custom_outputs = False
         for filename in os.listdir(folder_path):
             if filename.startswith(f"{self.asset.stac_id}_") and filename.endswith(
@@ -423,7 +434,6 @@ class RasterItemWidget(QWidget):
                     or "_Visual." in filename
                 ):
                     continue
-
                 has_custom_outputs = True
                 layer_name = filename.replace(f"{self.asset.stac_id}_", "").replace(
                     ".tif", ""
@@ -441,7 +451,6 @@ class RasterItemWidget(QWidget):
                 btn_layout.addWidget(label)
                 btn_layout.addWidget(btn_classify)
                 self.custom_outputs_layout.addLayout(btn_layout)
-
         self.custom_outputs_container.setVisible(has_custom_outputs)
 
 
@@ -462,11 +471,11 @@ class ImageListDialog(BaseDialog):
         self.active_operations: Dict[str, Any] = {}
         self.current_page = 1
         self.items_per_page = 5
+        self.aoi_tool = None
+        self.previous_map_tool = None
         self.init_list_ui()
         self._apply_filters()
-        add_basemap_global_osm(
-            self.iface, zoom=False
-        )  # We handle the zoom in showEvent
+        add_basemap_global_osm(self.iface, zoom=False)
 
     def init_list_ui(self):
         self.setWindowTitle("List Raster")
@@ -612,6 +621,7 @@ class ImageListDialog(BaseDialog):
             item_widget.cancelOperationRequested.connect(
                 self._handle_cancel_operation_requested
             )
+            item_widget.selectAoiRequested.connect(self._handle_select_aoi_requested)
             self.list_layout.insertWidget(self.list_layout.count() - 1, item_widget)
 
         total_pages = (
@@ -634,6 +644,96 @@ class ImageListDialog(BaseDialog):
             self.current_page += 1
             self.update_list_and_pagination()
 
+    def _handle_select_aoi_requested(self, asset: RasterAsset):
+        self.hide()
+        self.iface.messageBar().pushMessage(
+            "Info",
+            "Draw a rectangle on the map to define your Area of Interest. Press ESC to cancel.",
+            level=Qgis.Info,
+            duration=5,
+        )
+
+        self.aoi_tool = AoiMapTool(self.iface.mapCanvas())
+        self.aoi_tool.aoiSelected.connect(
+            lambda rect: self._on_aoi_selected(rect, asset)
+        )
+        self.aoi_tool.cancelled.connect(self._on_aoi_cancelled)
+
+        self.previous_map_tool = self.iface.mapCanvas().mapTool()
+        self.iface.mapCanvas().setMapTool(self.aoi_tool)
+
+    def _on_aoi_selected(self, aoi_rect: QgsRectangle, asset: RasterAsset):
+        self._restore_map_tool_and_show()
+
+        # MODIFIED: Check against the actual NDVI layer, not the asset geometry
+        ndvi_layer_name = f"{asset.stac_id}_NDVI"
+        layers = QgsProject.instance().mapLayersByName(ndvi_layer_name)
+
+        if not layers:
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Warning,
+                "Layer Not Found",
+                f"The processed NDVI layer '{ndvi_layer_name}' could not be found in the project.",
+            )
+            return
+
+        ndvi_layer = layers[0]
+
+        try:
+            # Get the extent and CRS from the actual layer
+            layer_extent_geom = QgsGeometry.fromRect(ndvi_layer.extent())
+            layer_crs = ndvi_layer.crs()
+
+            # Get the CRS of the map canvas where the AOI was drawn
+            canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+
+            # Transform the drawn AOI geometry from the canvas CRS to the layer's CRS
+            aoi_geom = QgsGeometry.fromRect(aoi_rect)
+            if canvas_crs != layer_crs:
+                transform = QgsCoordinateTransform(
+                    canvas_crs, layer_crs, QgsProject.instance()
+                )
+                aoi_geom.transform(transform)
+
+            # Check if the layer's extent contains the selected AOI
+            if layer_extent_geom.contains(aoi_geom):
+                ThemedMessageBox.show_message(
+                    self,
+                    QMessageBox.Information,
+                    "AOI Valid",
+                    "The selected Area of Interest is within the raster bounds.",
+                )
+            else:
+                ThemedMessageBox.show_message(
+                    self,
+                    QMessageBox.Warning,
+                    "AOI Invalid",
+                    "The selected Area of Interest is outside the raster bounds.",
+                )
+
+        except Exception as e:
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Geometry Error",
+                f"Could not perform AOI check: {e}",
+            )
+
+    def _on_aoi_cancelled(self):
+        self._restore_map_tool_and_show()
+        self.iface.messageBar().pushMessage(
+            "Info", "AOI selection cancelled.", level=Qgis.Info, duration=3
+        )
+
+    def _restore_map_tool_and_show(self):
+        self.iface.mapCanvas().setMapTool(self.previous_map_tool)
+        self.aoi_tool = None
+        self.previous_map_tool = None
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
     def get_or_create_plugin_layer_group(self) -> Optional[QgsLayerTreeGroup]:
         project = QgsProject.instance()
         root = project.layerTreeRoot()
@@ -652,29 +752,23 @@ class ImageListDialog(BaseDialog):
         return None
 
     def _zoom_to_geometry(self, geometry_dict: Optional[Dict[str, Any]]):
-        """Zooms the map canvas to the extent of a given geometry dictionary."""
         if not geometry_dict or "coordinates" not in geometry_dict:
             return
-
         try:
             coords = geometry_dict["coordinates"][0]
             if not coords:
                 return
-
             x_coords = [p[0] for p in coords]
             y_coords = [p[1] for p in coords]
             bbox = QgsRectangle(
                 min(x_coords), min(y_coords), max(x_coords), max(y_coords)
             )
-
             source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
             dest_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-
             transform = QgsCoordinateTransform(
                 source_crs, dest_crs, QgsProject.instance()
             )
             bbox_transformed = transform.transform(bbox)
-
             self.iface.mapCanvas().setExtent(bbox_transformed)
             self.iface.mapCanvas().refresh()
         except (IndexError, TypeError, Exception) as e:
@@ -696,7 +790,6 @@ class ImageListDialog(BaseDialog):
             if item_widget := self._get_item_widget(asset.stac_id):
                 item_widget.update_ui_based_on_local_files()
             return
-
         op_key = f"{asset.stac_id}_visual"
         self.active_operations[op_key] = {
             "type": "visual",
@@ -806,13 +899,11 @@ class ImageListDialog(BaseDialog):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         request = QNetworkRequest(QUrl(url))
         reply = self.download_network_manager.get(request)
-
         if op_key in self.active_operations:
             self.active_operations[op_key]["replies"] = self.active_operations[
                 op_key
             ].get("replies", [])
             self.active_operations[op_key]["replies"].append(reply)
-
         reply.setProperty("stac_id", asset.stac_id)
         reply.setProperty("band", band)
         reply.setProperty("save_path", save_path)
@@ -841,10 +932,8 @@ class ImageListDialog(BaseDialog):
         band = reply.property("band")
         save_path = reply.property("save_path")
         op_key = reply.property("op_key")
-
         if file_handle := reply.property("file_handle"):
             file_handle.close()
-
         if reply.error() == QNetworkReply.OperationCanceledError:
             QgsMessageLog.logMessage(
                 f"Download canceled for {band} of {stac_id}", "IDPMPlugin", Qgis.Info
@@ -903,7 +992,6 @@ class ImageListDialog(BaseDialog):
         }
         if item_widget := self._get_item_widget(asset.stac_id):
             item_widget.update_ui_based_on_local_files()
-
         for band_type, (url, save_path) in bands_to_download.items():
             if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
                 self._on_band_download_complete(op_key, band_type, save_path)
@@ -915,7 +1003,6 @@ class ImageListDialog(BaseDialog):
         if not op:
             return
         op["completed"][band] = save_path
-
         if len(op["completed"]) == op["expected"]:
             asset = op["asset"]
             if op["type"] == "visual":
@@ -949,18 +1036,14 @@ class ImageListDialog(BaseDialog):
         band_paths: dict,
         coefficients: dict,
     ):
-        """Runs the custom raster calculation in a background task."""
         folder_path = os.path.join(Config.DOWNLOAD_DIR, asset.stac_id)
         output_path = os.path.join(folder_path, f"{asset.stac_id}_{output_name}.tif")
-
         op_key = f"{asset.stac_id}_{output_name}"
         task = RasterCalculatorTask(
             formula, band_paths, coefficients, output_path, asset.stac_id
         )
-
         if op_key in self.active_operations:
             self.active_operations[op_key]["task"] = task
-
         progress = QProgressDialog(
             f"Calculating '{output_name}' for {asset.stac_id}...",
             "Cancel",
@@ -969,19 +1052,16 @@ class ImageListDialog(BaseDialog):
             self,
         )
         progress.setWindowModality(Qt.WindowModal)
-
         task.progressChanged.connect(lambda value: progress.setValue(int(value)))
         task.calculationFinished.connect(self._on_custom_calculation_finished)
         task.errorOccurred.connect(self._on_task_error)
         progress.canceled.connect(task.cancel)
-
         QgsApplication.taskManager().addTask(task)
 
     def _on_custom_calculation_finished(self, path: str, name: str, stac_id: str):
         op_key = f"{stac_id}_{name}"
         if op_key in self.active_operations:
             del self.active_operations[op_key]
-
         ThemedMessageBox.show_message(
             self,
             QMessageBox.Information,
@@ -992,12 +1072,10 @@ class ImageListDialog(BaseDialog):
         layer = self._load_raster_into_qgis(asset, path, name)
         if layer and asset:
             self._zoom_to_geometry(asset.geometry)
-
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
 
     def _handle_classify_custom_requested(self, layer_name: str, layer_path: str):
-        """Handles request to classify a custom raster layer."""
         style_dialog = NdviStyleDialog(self)
         if style_dialog.exec_() == QDialog.Accepted:
             items = style_dialog.get_classification_items()
@@ -1006,28 +1084,20 @@ class ImageListDialog(BaseDialog):
             )
 
     def _handle_cancel_operation_requested(self, stac_id: str):
-        """Cancels an active operation for a given STAC ID."""
         op_key_to_cancel = None
         for key in self.active_operations:
             if key.startswith(stac_id):
                 op_key_to_cancel = key
                 break
-
         if op_key_to_cancel and op_key_to_cancel in self.active_operations:
             op = self.active_operations[op_key_to_cancel]
-
-            # Cancel network replies
             if "replies" in op:
                 for reply in op["replies"]:
                     if reply.isRunning():
                         reply.abort()
-
-            # Cancel background task
             if "task" in op and op["task"]:
                 op["task"].cancel()
-
             del self.active_operations[op_key_to_cancel]
-
             if widget := self._get_item_widget(stac_id):
                 widget.update_ui_based_on_local_files()
             QgsMessageLog.logMessage(
@@ -1040,13 +1110,11 @@ class ImageListDialog(BaseDialog):
         ThemedMessageBox.show_message(
             self, QMessageBox.Critical, "Processing Error", error_msg
         )
-
         keys_to_remove = [
             key for key in self.active_operations if key.startswith(stac_id)
         ]
         for key in keys_to_remove:
             del self.active_operations[key]
-
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
 
@@ -1060,7 +1128,6 @@ class ImageListDialog(BaseDialog):
         )
         if op_key in self.active_operations:
             self.active_operations[op_key]["task"] = task
-
         progress = QProgressDialog(
             f"Processing NDVI for {asset.stac_id}...", "Cancel", 0, 100, self
         )
@@ -1086,7 +1153,6 @@ class ImageListDialog(BaseDialog):
         )
         if op_key in self.active_operations:
             self.active_operations[op_key]["task"] = task
-
         progress = QProgressDialog(
             f"Processing False Color for {asset.stac_id}...", "Cancel", 0, 100, self
         )
@@ -1105,7 +1171,6 @@ class ImageListDialog(BaseDialog):
         op_key = f"{stac_id}_ndvi"
         if op_key in self.active_operations:
             del self.active_operations[op_key]
-
         ThemedMessageBox.show_message(
             self,
             QMessageBox.Information,
@@ -1117,7 +1182,6 @@ class ImageListDialog(BaseDialog):
             layer = self._load_ndvi_into_qgis_layer(asset, ndvi_path, style_items)
             if layer:
                 self._zoom_to_geometry(asset.geometry)
-
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
 
@@ -1125,7 +1189,6 @@ class ImageListDialog(BaseDialog):
         op_key = f"{stac_id}_false_color"
         if op_key in self.active_operations:
             del self.active_operations[op_key]
-
         ThemedMessageBox.show_message(
             self,
             QMessageBox.Information,
@@ -1139,7 +1202,6 @@ class ImageListDialog(BaseDialog):
             )
             if layer:
                 self._zoom_to_geometry(asset.geometry)
-
         if item_widget := self._get_item_widget(stac_id):
             item_widget.update_ui_based_on_local_files()
 
@@ -1232,17 +1294,17 @@ class ImageListDialog(BaseDialog):
         self.setStyleSheet(qss)
 
     def closeEvent(self, event):
-        # Cancel all active operations when the dialog is closed
+        if self.aoi_tool:
+            self._on_aoi_cancelled()
+
         for stac_id in list(self.active_operations.keys()):
             self._handle_cancel_operation_requested(stac_id.split("_")[0])
         super().closeEvent(event)
 
     def showEvent(self, event):
-        """Overrides QDialog.showEvent to perform actions when the dialog is shown."""
         super().showEvent(event)
 
         def do_initial_zoom():
-            """Performs the initial zoom to Indonesia if no other layers are present."""
             if not any(
                 layer.name().endswith(("_Visual", "_NDVI", "_FalseColor", "_Custom"))
                 for layer in QgsProject.instance().mapLayers().values()
@@ -1257,5 +1319,4 @@ class ImageListDialog(BaseDialog):
                 self.iface.mapCanvas().setExtent(indonesia_bbox_transformed)
                 self.iface.mapCanvas().refresh()
 
-        # Use a single-shot timer to ensure the zoom happens after the event loop is idle
         QTimer.singleShot(0, do_initial_zoom)
