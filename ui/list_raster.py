@@ -44,7 +44,13 @@ from .ndvi_style_dialog import NdviStyleDialog
 from .raster_calculator_dialog import RasterCalculatorDialog
 from .spinner_widget import SpinnerWidget
 from .aoi_map_tool import AoiMapTool
-from ..core import NdviTask, FalseColorTask, RasterAsset, RasterCalculatorTask
+from ..core import (
+    NdviTask,
+    FalseColorTask,
+    RasterAsset,
+    RasterCalculatorTask,
+    ZonalStatsTask,
+)
 from ..core.util import add_basemap_global_osm
 from .themed_message_box import ThemedMessageBox
 
@@ -357,14 +363,10 @@ class RasterItemWidget(QWidget):
         else:
             self.btn_false_color.setText("Process False Color")
 
-        # --- REFACTORED LOGIC ---
-        # Check for both NDVI and False Color files
         ndvi_exists = os.path.exists(ndvi_path) and os.path.getsize(ndvi_path) > 0
         fc_exists = os.path.exists(fc_path) and os.path.getsize(fc_path) > 0
 
-        # Show the AOI button only if both layers are processed and available
         self.btn_select_aoi.setVisible(ndvi_exists and fc_exists)
-        # --- END REFACTORED LOGIC ---
 
         self.progress_bar_visual.setVisible(False)
         self.bands_progress_container.setVisible(False)
@@ -693,19 +695,14 @@ class ImageListDialog(BaseDialog):
             canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
 
             aoi_geom = QgsGeometry.fromRect(aoi_rect)
-            if canvas_crs != layer_crs:
+            if canvas_crs.authid() != layer_crs.authid():
                 transform = QgsCoordinateTransform(
                     canvas_crs, layer_crs, QgsProject.instance()
                 )
                 aoi_geom.transform(transform)
 
             if layer_extent_geom.contains(aoi_geom):
-                ThemedMessageBox.show_message(
-                    self,
-                    QMessageBox.Information,
-                    "AOI Valid",
-                    "The selected Area of Interest is within the raster bounds.",
-                )
+                self._run_zonal_stats_task(ndvi_layer.source(), aoi_geom, layer_crs)
             else:
                 ThemedMessageBox.show_message(
                     self,
@@ -720,6 +717,56 @@ class ImageListDialog(BaseDialog):
                 QMessageBox.Critical,
                 "Geometry Error",
                 f"Could not perform AOI check: {e}",
+            )
+
+    # NEW: Method to create and run the zonal statistics task
+    def _run_zonal_stats_task(
+        self,
+        raster_path: str,
+        aoi_geometry: QgsGeometry,
+        aoi_crs: QgsCoordinateReferenceSystem,
+    ):
+        task = ZonalStatsTask(raster_path, aoi_geometry, aoi_crs)
+
+        progress = QProgressDialog(
+            "Analyzing Vegetation in AOI...", "Cancel", 0, 100, self
+        )
+        progress.setWindowModality(Qt.WindowModal)
+
+        task.progressChanged.connect(lambda value: progress.setValue(int(value)))
+        task.calculationFinished.connect(self._on_zonal_stats_finished)
+        task.errorOccurred.connect(
+            lambda err: ThemedMessageBox.show_message(
+                self, QMessageBox.Critical, "Analysis Error", err
+            )
+        )
+        progress.canceled.connect(task.cancel)
+
+        QgsApplication.taskManager().addTask(task)
+
+    # NEW: Method to handle the results from the zonal statistics task
+    def _on_zonal_stats_finished(self, stats: dict):
+        if not stats:
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Warning,
+                "Analysis Result",
+                "Could not calculate statistics for the selected AOI.",
+            )
+            return
+
+        mean_ndvi = stats.get("mean", 0.0)
+
+        # A common threshold for dense vegetation is an NDVI value of 0.4
+        if mean_ndvi > 0.4:
+            message = f"Dense vegetation found!\n\nAverage NDVI in the selected area: {mean_ndvi:.3f}"
+            ThemedMessageBox.show_message(
+                self, QMessageBox.Information, "Analysis Complete", message
+            )
+        else:
+            message = f"No dense vegetation found.\n\nAverage NDVI in the selected area: {mean_ndvi:.3f}"
+            ThemedMessageBox.show_message(
+                self, QMessageBox.Warning, "Analysis Complete", message
             )
 
     def _on_aoi_cancelled(self):
