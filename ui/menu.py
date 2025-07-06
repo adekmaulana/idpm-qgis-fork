@@ -1,3 +1,5 @@
+# idpm-qgis/ui/menu.py
+
 from typing import Optional
 import os
 import json
@@ -15,13 +17,21 @@ from PyQt5.QtWidgets import (
     QMenu,
     QStyleOption,
     QStyle,
+    QSpacerItem,
+    QSizePolicy,
 )
 from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QMouseEvent
 from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtCore import Qt, QSize, QUrl, QSettings, pyqtSignal
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from qgis.gui import QgisInterface
-from qgis.core import Qgis, QgsMessageLog
+from qgis.core import (
+    Qgis,
+    QgsMessageLog,
+    QgsRectangle,
+    QgsCoordinateTransform,
+    QgsProject,
+)
 
 from ..config import Config
 from .base_dialog import BaseDialog
@@ -29,6 +39,7 @@ from .profile import ProfileDialog
 from .loading import LoadingDialog
 from .custom_input_dialog import CustomInputDialog
 from .themed_message_box import ThemedMessageBox
+from .aoi_map_tool import AoiMapTool  # NEW: Import the AOI map tool
 from ..core.database import load_existing_layer
 from ..core.util import add_basemap_global_osm
 
@@ -118,6 +129,12 @@ class MenuWidget(BaseDialog):
         self.loading_dialog = None
         self.user_profile = {}
         self.main_bg_path = os.path.join(Config.ASSETS_PATH, "images", "menu_bg.jpg")
+
+        # NEW: Attributes for AOI pre-filtering
+        self.aoi_tool = None
+        self.previous_map_tool = None
+        self.selected_aoi: Optional[QgsRectangle] = None
+
         self.init_menu_ui()
         self._load_and_apply_profile()
 
@@ -191,6 +208,10 @@ class MenuWidget(BaseDialog):
         icon_path_raster = os.path.join(Config.ASSETS_PATH, "images", "image.svg")
         icon_path_potensi = os.path.join(Config.ASSETS_PATH, "images", "maps.svg")
         icon_path_existing = os.path.join(Config.ASSETS_PATH, "images", "world.svg")
+        icon_path_aoi = os.path.join(
+            Config.ASSETS_PATH, "images", "focus.svg"
+        )  # NEW: Icon for AOI
+
         self.card_list_raster = ActionCard(
             icon_path_raster, "List Raster", "View Detail"
         )
@@ -200,16 +221,95 @@ class MenuWidget(BaseDialog):
         self.card_open_existing = ActionCard(
             icon_path_existing, "Open Data Existing", "View Detail"
         )
+        # NEW: Create the AOI selection card
+        self.card_select_aoi = ActionCard(
+            icon_path_aoi, "Select AOI for Search", "Define Area"
+        )
+
         self.card_list_raster.clicked.connect(self.open_image_list)
         self.card_open_existing.clicked.connect(self.open_existing_data)
+        self.card_select_aoi.clicked.connect(
+            self._handle_select_aoi_for_search
+        )  # NEW: Connect signal
 
         button_layout.addWidget(self.card_list_raster)
         button_layout.addWidget(self.card_open_potensi)
         button_layout.addWidget(self.card_open_existing)
+        button_layout.addWidget(self.card_select_aoi)  # NEW: Add card to layout
         content_layout.addWidget(button_container)
+
+        # NEW: Add status label and clear button for AOI
+        aoi_status_layout = QHBoxLayout()
+        aoi_status_layout.setAlignment(Qt.AlignCenter)
+        self.aoi_status_label = QLabel("No Area of Interest (AOI) selected.")
+        self.aoi_status_label.setObjectName("aoiStatusLabel")
+        self.clear_aoi_button = QPushButton("Clear AOI")
+        self.clear_aoi_button.setObjectName("clearAoiButton")
+        self.clear_aoi_button.setCursor(Qt.PointingHandCursor)
+        self.clear_aoi_button.setVisible(False)
+        self.clear_aoi_button.clicked.connect(self._clear_aoi)
+        aoi_status_layout.addStretch()
+        aoi_status_layout.addWidget(self.aoi_status_label)
+        aoi_status_layout.addWidget(self.clear_aoi_button)
+        aoi_status_layout.addStretch()
+        content_layout.addSpacing(20)
+        content_layout.addLayout(aoi_status_layout)
+
         main_layout.addLayout(content_layout)
         main_layout.addStretch(2)
         self.apply_stylesheet()
+
+    # NEW: Handler to start the AOI selection process
+    def _handle_select_aoi_for_search(self):
+        self.hide()
+        self.iface.messageBar().pushMessage(
+            "Info",
+            "Draw a rectangle on the map to define your search area. Press ESC to cancel.",
+            level=Qgis.Info,
+            duration=5,
+        )
+
+        self.aoi_tool = AoiMapTool(self.iface.mapCanvas())
+        self.aoi_tool.aoiSelected.connect(self._on_aoi_selected_for_search)
+        self.aoi_tool.cancelled.connect(self._on_aoi_cancelled)
+
+        self.previous_map_tool = self.iface.mapCanvas().mapTool()
+        self.iface.mapCanvas().setMapTool(self.aoi_tool)
+
+    # NEW: Handler for when the AOI is successfully drawn
+    def _on_aoi_selected_for_search(self, aoi_rect: QgsRectangle):
+        self.selected_aoi = aoi_rect
+        self._restore_map_tool_and_show()
+        self.aoi_status_label.setText("Area of Interest has been set.")
+        self.clear_aoi_button.setVisible(True)
+        ThemedMessageBox.show_message(
+            self,
+            QMessageBox.Information,
+            "AOI Set",
+            "The search area has been defined. Now click 'List Raster' to find intersecting images.",
+        )
+
+    # NEW: Handler for when the user cancels drawing
+    def _on_aoi_cancelled(self):
+        self._restore_map_tool_and_show()
+        self.iface.messageBar().pushMessage(
+            "Info", "AOI selection cancelled.", level=Qgis.Info, duration=3
+        )
+
+    # NEW: Helper to clean up the map tool and show the menu again
+    def _restore_map_tool_and_show(self):
+        self.iface.mapCanvas().setMapTool(self.previous_map_tool)
+        self.aoi_tool = None
+        self.previous_map_tool = None
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    # NEW: Method to clear the selected AOI
+    def _clear_aoi(self):
+        self.selected_aoi = None
+        self.aoi_status_label.setText("No Area of Interest (AOI) selected.")
+        self.clear_aoi_button.setVisible(False)
 
     def _get_selected_wilker(self) -> Optional[str]:
         if not self.user_profile:
@@ -306,8 +406,9 @@ class MenuWidget(BaseDialog):
             features = response.get("data", {}).get("features", [])
 
             if self.image_list_dialog is None:
+                # MODIFIED: Pass the selected AOI to the ImageListDialog
                 self.image_list_dialog = ImageListDialog(
-                    features, self.iface, self.iface.mainWindow()
+                    features, self.iface, self.iface.mainWindow(), aoi=self.selected_aoi
                 )
                 self.image_list_dialog.finished.connect(self._on_image_list_closed)
                 self.hide()
@@ -447,6 +548,17 @@ class MenuWidget(BaseDialog):
             #titleLabel {{ font-size: 28px; font-weight: bold; }}
             #subtitleLabel {{ font-size: 36px; font-weight: bold; }}
             #descriptionLabel {{ font-size: 14px; color: #D0D0D0; }}
+            #aoiStatusLabel {{ font-size: 12px; color: #E0E0E0; font-style: italic; }}
+            
+            #clearAoiButton {{
+                background-color: transparent;
+                color: #FFDAB9;
+                border: none;
+                text-decoration: underline;
+                font-size: 12px;
+                padding: 2px;
+            }}
+            #clearAoiButton:hover {{ color: white; }}
             
             #minimizeButton, #maximizeButton, #closeButton {{
                 background-color: transparent; color: white; border: none;

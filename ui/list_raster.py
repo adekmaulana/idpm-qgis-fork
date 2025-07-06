@@ -466,11 +466,13 @@ class RasterItemWidget(QWidget):
 class ImageListDialog(BaseDialog):
     """Dialog to display a list of raster assets with filtering and pagination."""
 
+    # MODIFIED: Add 'aoi' parameter to constructor
     def __init__(
         self,
         data: List[Dict[str, Any]],
         iface: QgisInterface,
         parent: Optional[QWidget] = None,
+        aoi: Optional[QgsRectangle] = None,
     ):
         super().__init__(parent)
         self.iface = iface
@@ -482,6 +484,7 @@ class ImageListDialog(BaseDialog):
         self.items_per_page = 5
         self.aoi_tool = None
         self.previous_map_tool = None
+        self.search_aoi = aoi  # NEW: Store the search AOI
         self.init_list_ui()
         self._apply_filters()
         add_basemap_global_osm(self.iface, zoom=False)
@@ -534,23 +537,63 @@ class ImageListDialog(BaseDialog):
         self.apply_stylesheet()
 
     def _apply_filters(self):
+        # Start with the full list
+        assets_to_filter = self.all_assets
+
+        # --- NEW: First, filter by the search AOI if it exists ---
+        if self.search_aoi:
+            aoi_filtered_assets = []
+
+            # Prepare for CRS transformation
+            canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+            asset_crs = QgsCoordinateReferenceSystem("EPSG:4326")
+            transform = QgsCoordinateTransform(
+                canvas_crs, asset_crs, QgsProject.instance()
+            )
+
+            # Transform the search AOI to the assets' CRS (EPSG:4326)
+            aoi_geom = QgsGeometry.fromRect(self.search_aoi)
+            aoi_geom.transform(transform)
+
+            for asset in assets_to_filter:
+                if not asset.geometry:
+                    continue
+
+                try:
+                    asset_geom = QgsGeometry.fromWkt(
+                        "POLYGON(("
+                        + ", ".join(
+                            [f"{p[0]} {p[1]}" for p in asset.geometry["coordinates"][0]]
+                        )
+                        + "))"
+                    )
+                    # Check for intersection
+                    if asset_geom.intersects(aoi_geom):
+                        aoi_filtered_assets.append(asset)
+                except Exception:
+                    continue  # Skip assets with invalid geometry
+
+            assets_to_filter = aoi_filtered_assets
+
+        # Then, filter by cloud cover
         filter_text = self.cloud_filter_combo.currentText()
         if filter_text == "All":
-            self.filtered_assets = self.all_assets
+            self.filtered_assets = assets_to_filter
         elif filter_text == "0 - 10%":
             self.filtered_assets = [
-                a for a in self.all_assets if 0 <= a.cloud_cover <= 10
+                a for a in assets_to_filter if 0 <= a.cloud_cover <= 10
             ]
         elif filter_text == "10 - 20%":
             self.filtered_assets = [
-                a for a in self.all_assets if 10 < a.cloud_cover <= 20
+                a for a in assets_to_filter if 10 < a.cloud_cover <= 20
             ]
         elif filter_text == "20 - 30%":
             self.filtered_assets = [
-                a for a in self.all_assets if 20 < a.cloud_cover <= 30
+                a for a in assets_to_filter if 20 < a.cloud_cover <= 30
             ]
         else:
-            self.filtered_assets = self.all_assets
+            self.filtered_assets = assets_to_filter
+
         self.current_page = 1
         self.update_list_and_pagination()
 
@@ -719,7 +762,6 @@ class ImageListDialog(BaseDialog):
                 f"Could not perform AOI check: {e}",
             )
 
-    # NEW: Method to create and run the zonal statistics task
     def _run_zonal_stats_task(
         self,
         raster_path: str,
@@ -744,7 +786,6 @@ class ImageListDialog(BaseDialog):
 
         QgsApplication.taskManager().addTask(task)
 
-    # NEW: Method to handle the results from the zonal statistics task
     def _on_zonal_stats_finished(self, stats: dict):
         if not stats:
             ThemedMessageBox.show_message(
@@ -757,7 +798,6 @@ class ImageListDialog(BaseDialog):
 
         mean_ndvi = stats.get("mean", 0.0)
 
-        # A common threshold for dense vegetation is an NDVI value of 0.4
         if mean_ndvi > 0.4:
             message = f"Dense vegetation found!\n\nAverage NDVI in the selected area: {mean_ndvi:.3f}"
             ThemedMessageBox.show_message(
@@ -783,6 +823,7 @@ class ImageListDialog(BaseDialog):
         self.raise_()
         self.activateWindow()
 
+    # ... (rest of the file is unchanged)
     def get_or_create_plugin_layer_group(self) -> Optional[QgsLayerTreeGroup]:
         project = QgsProject.instance()
         root = project.layerTreeRoot()
