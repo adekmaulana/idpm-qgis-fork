@@ -348,16 +348,23 @@ class RasterItemWidget(QWidget):
         ndvi_path = self.asset.get_local_path("ndvi")
         if os.path.exists(ndvi_path) and os.path.getsize(ndvi_path) > 0:
             self.btn_ndvi.setText("Open NDVI")
-            self.btn_select_aoi.setVisible(True)
         else:
             self.btn_ndvi.setText("Process NDVI")
-            self.btn_select_aoi.setVisible(False)
 
         fc_path = self.asset.get_local_path("false_color")
         if os.path.exists(fc_path) and os.path.getsize(fc_path) > 0:
             self.btn_false_color.setText("Open False Color")
         else:
             self.btn_false_color.setText("Process False Color")
+
+        # --- REFACTORED LOGIC ---
+        # Check for both NDVI and False Color files
+        ndvi_exists = os.path.exists(ndvi_path) and os.path.getsize(ndvi_path) > 0
+        fc_exists = os.path.exists(fc_path) and os.path.getsize(fc_path) > 0
+
+        # Show the AOI button only if both layers are processed and available
+        self.btn_select_aoi.setVisible(ndvi_exists and fc_exists)
+        # --- END REFACTORED LOGIC ---
 
         self.progress_bar_visual.setVisible(False)
         self.bands_progress_container.setVisible(False)
@@ -665,7 +672,6 @@ class ImageListDialog(BaseDialog):
     def _on_aoi_selected(self, aoi_rect: QgsRectangle, asset: RasterAsset):
         self._restore_map_tool_and_show()
 
-        # MODIFIED: Check against the actual NDVI layer, not the asset geometry
         ndvi_layer_name = f"{asset.stac_id}_NDVI"
         layers = QgsProject.instance().mapLayersByName(ndvi_layer_name)
 
@@ -681,14 +687,11 @@ class ImageListDialog(BaseDialog):
         ndvi_layer = layers[0]
 
         try:
-            # Get the extent and CRS from the actual layer
             layer_extent_geom = QgsGeometry.fromRect(ndvi_layer.extent())
             layer_crs = ndvi_layer.crs()
 
-            # Get the CRS of the map canvas where the AOI was drawn
             canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
 
-            # Transform the drawn AOI geometry from the canvas CRS to the layer's CRS
             aoi_geom = QgsGeometry.fromRect(aoi_rect)
             if canvas_crs != layer_crs:
                 transform = QgsCoordinateTransform(
@@ -696,7 +699,6 @@ class ImageListDialog(BaseDialog):
                 )
                 aoi_geom.transform(transform)
 
-            # Check if the layer's extent contains the selected AOI
             if layer_extent_geom.contains(aoi_geom):
                 ThemedMessageBox.show_message(
                     self,
@@ -1296,7 +1298,6 @@ class ImageListDialog(BaseDialog):
     def closeEvent(self, event):
         if self.aoi_tool:
             self._on_aoi_cancelled()
-
         for stac_id in list(self.active_operations.keys()):
             self._handle_cancel_operation_requested(stac_id.split("_")[0])
         super().closeEvent(event)
