@@ -1,9 +1,7 @@
 from typing import Optional
-import sys
 import os
 import json
 from PyQt5.QtWidgets import (
-    QApplication,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -281,19 +279,21 @@ class LoginWidget(BaseDialog):
         form_layout.setSpacing(20)
         form_layout.setContentsMargins(0, 0, 0, 0)
         form_widget.setMaximumWidth(450)
-        header_label = QLabel("Enter your username and password.")
+        header_label = QLabel("Enter your username\nand password.")
         header_label.setObjectName("headerLabel")
-        header_label.setFont(QFont("Montserrat", 14, QFont.Bold))
-        sub_header_label = QLabel("Please log in to continue spatial data processing.")
+        header_label.setFont(QFont("Montserrat", 20, QFont.Bold))
+        sub_header_label = QLabel("Please log in to continue spatial data\nprocessing.")
         sub_header_label.setObjectName("subHeaderLabel")
-        sub_header_label.setFont(QFont("Montserrat", 12))
+        sub_header_label.setFont(QFont("Montserrat", 16, QFont.Thin))
         sub_header_label.setWordWrap(True)
         self.email_input = QLineEdit()
+        self.email_input.setMaximumWidth(360)
         self.email_input.setPlaceholderText("E-mail Address")
-        self.email_input.setFont(QFont("Montserrat", 11))
+        self.email_input.setFont(QFont("Open Sans", 12, QFont.Thin))
         self.password_input = QLineEdit()
+        self.password_input.setMaximumWidth(360)
         self.password_input.setPlaceholderText("Password")
-        self.password_input.setFont(QFont("Montserrat", 11))
+        self.password_input.setFont(QFont("Open Sans", 12, QFont.Thin))
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.returnPressed.connect(self._attempt_login)
         buttons_widget = QWidget()
@@ -302,7 +302,7 @@ class LoginWidget(BaseDialog):
         buttons_layout.setSpacing(15)
         self.login_button = QPushButton("Login")
         self.login_button.setObjectName("loginButton")
-        self.login_button.setFont(QFont("Montserrat", 11, QFont.Bold))
+        self.login_button.setFont(QFont("Montserrat", 12, QFont.Bold))
         self.login_button.setCursor(Qt.PointingHandCursor)
         self.login_button.clicked.connect(self._attempt_login)
         buttons_layout.addWidget(self.login_button)
@@ -349,8 +349,7 @@ class LoginWidget(BaseDialog):
             #copyrightLabel {{ color: #E0E0E0; }}
             #rightPanel {{ background-color: transparent; }}
             #headerLabel, #subHeaderLabel {{ color: white; }}
-            #subHeaderLabel {{ color: #D0D0D0; }}
-            
+
             #minimizeButton, #maximizeButton, #closeButton {{
                 background-color: transparent; color: white; border: none;
                 font-family: "Arial", sans-serif;
@@ -369,16 +368,15 @@ class LoginWidget(BaseDialog):
             }}
             
             QLineEdit {{
-                background-color: rgba(0, 0, 0, 0.25);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-                padding: 12px 15px;
+                background-color: rgba(255, 255, 255, 0.07);
+                border-radius: 10px;
+                padding: 12px 20px;
                 color: white;
             }}
-            QLineEdit:focus {{ border: 1px solid rgba(255, 255, 255, 0.5); }}
-            QLineEdit::placeholder {{ color: #B0B0B0; }}
+            QLineEdit:focus {{ border: 0.25px solid rgba(255, 255, 255); }}
+            QLineEdit::placeholder {{ color: #D6D6D6; }}
             #loginButton {{
-                background-color: white; color: #222222; border: none;
+                background-color: white; color: #333333; border: none;
                 border-radius: 8px;
                 padding: 12px 30px;
             }}
