@@ -713,6 +713,7 @@ class ImageListDialog(BaseDialog):
 
         self.previous_map_tool = self.iface.mapCanvas().mapTool()
         self.iface.mapCanvas().setMapTool(self.aoi_tool)
+        self.iface.mapCanvas().setFocus()
 
     def _on_aoi_selected(self, aoi_rect: QgsRectangle, asset: RasterAsset):
         self._restore_map_tool_and_show()

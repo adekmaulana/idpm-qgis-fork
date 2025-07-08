@@ -3,6 +3,8 @@ import os
 import json
 from datetime import datetime
 
+from qgis.PyQt.QtWidgets import QGraphicsDropShadowEffect
+
 from PyQt5.QtWidgets import (
     QApplication,
     QWidget,
@@ -16,14 +18,17 @@ from PyQt5.QtWidgets import (
     QStyleOption,
     QStyle,
 )
-from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QMouseEvent
+from PyQt5.QtGui import QFont, QHideEvent, QPixmap, QIcon, QPainter, QMouseEvent
 from PyQt5.QtSvg import QSvgRenderer
-from PyQt5.QtCore import Qt, QSize, QUrl, QSettings, pyqtSignal
+from PyQt5.QtCore import QTimer, Qt, QSize, QUrl, QSettings, pyqtSignal
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from qgis.gui import QgisInterface
 from qgis.core import (
     Qgis,
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
     QgsMessageLog,
+    QgsProject,
     QgsRectangle,
 )
 
@@ -262,6 +267,9 @@ class MenuWidget(BaseDialog):
 
     # NEW: Handler to start the AOI selection process
     def _handle_select_aoi_for_search(self):
+        # Load base map if not already loaded
+        add_basemap_global_osm(self.iface, zoom=False)
+
         self.hide()
         self.iface.messageBar().pushMessage(
             "Info",
@@ -276,6 +284,7 @@ class MenuWidget(BaseDialog):
 
         self.previous_map_tool = self.iface.mapCanvas().mapTool()
         self.iface.mapCanvas().setMapTool(self.aoi_tool)
+        self.iface.mapCanvas().setFocus()
 
     # NEW: Handler for when the AOI is successfully drawn
     def _on_aoi_selected_for_search(self, aoi_rect: QgsRectangle):
@@ -528,6 +537,26 @@ class MenuWidget(BaseDialog):
             settings.remove("IDPMPlugin/user_profile")
             QgsMessageLog.logMessage("User logged out.", "IDPMPlugin", Qgis.Info)
             self.accept()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+
+        def do_initial_zoom():
+            if not any(
+                layer.name().endswith(("_Visual", "_NDVI", "_FalseColor", "_Custom"))
+                for layer in QgsProject.instance().mapLayers().values()
+            ):
+                indonesia_bbox = QgsRectangle(95.0, -11.0, 141.0, 6.0)
+                dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")
+                source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
+                transform = QgsCoordinateTransform(
+                    source_crs, dest_crs, QgsProject.instance()
+                )
+                indonesia_bbox_transformed = transform.transform(indonesia_bbox)
+                self.iface.mapCanvas().setExtent(indonesia_bbox_transformed)
+                self.iface.mapCanvas().refresh()
+
+        QTimer.singleShot(0, do_initial_zoom)
 
     def apply_stylesheet(self) -> None:
         arrow_icon_path = os.path.join(
