@@ -1,5 +1,3 @@
-# idpm-qgis/ui/menu.py
-
 from typing import Optional
 import os
 import json
@@ -17,8 +15,6 @@ from PyQt5.QtWidgets import (
     QMenu,
     QStyleOption,
     QStyle,
-    QSpacerItem,
-    QSizePolicy,
 )
 from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QMouseEvent
 from PyQt5.QtSvg import QSvgRenderer
@@ -29,17 +25,15 @@ from qgis.core import (
     Qgis,
     QgsMessageLog,
     QgsRectangle,
-    QgsCoordinateTransform,
-    QgsProject,
 )
 
 from ..config import Config
+from .aoi_map_tool import AoiMapTool
 from .base_dialog import BaseDialog
 from .profile import ProfileDialog
 from .loading import LoadingDialog
 from .custom_input_dialog import CustomInputDialog
 from .themed_message_box import ThemedMessageBox
-from .aoi_map_tool import AoiMapTool  # NEW: Import the AOI map tool
 from ..core.database import load_existing_layer
 from ..core.util import add_basemap_global_osm
 
@@ -60,10 +54,10 @@ class ActionCard(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         self.setObjectName("actionCard")
         self.setAutoFillBackground(True)
-        self.setFixedSize(220, 120)
+        self.setFixedSize(206, 126)
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 15, 20, 15)
+        main_layout.setContentsMargins(20, 16, 20, 16)
         main_layout.setSpacing(10)
         main_layout.setAlignment(Qt.AlignTop)
 
@@ -101,6 +95,13 @@ class ActionCard(QWidget):
         main_layout.addWidget(title_label)
         main_layout.addWidget(subtitle_label)
         main_layout.addStretch()
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if not self.rect().contains(event.pos()):
+            self.setCursor(Qt.ArrowCursor)
+            return
+
+        self.setCursor(Qt.PointingHandCursor)
 
     def mousePressEvent(self, event: QMouseEvent):
         pass
@@ -184,18 +185,18 @@ class MenuWidget(BaseDialog):
         logo_label.setAlignment(Qt.AlignCenter)
         self.title_label = QLabel("Hi User")
         self.title_label.setObjectName("titleLabel")
-        self.title_label.setFont(QFont("Montserrat", 22, QFont.Bold))
+        self.title_label.setFont(QFont("Montserrat", 14, QFont.Bold))
         self.title_label.setAlignment(Qt.AlignCenter)
-        subtitle_label = QLabel("Kelola dan Jelajahi\nData Geospasial Anda")
+        subtitle_label = QLabel("Kelola dan Jelajahi Data Geospasial Anda")
         subtitle_label.setWordWrap(True)
         subtitle_label.setObjectName("subtitleLabel")
-        subtitle_label.setFont(QFont("Montserrat", 28, QFont.Bold))
+        subtitle_label.setFont(QFont("Montserrat", 16, QFont.Bold))
         subtitle_label.setAlignment(Qt.AlignCenter)
         description_label = QLabel(
             "Jelajahi fitur untuk kelola dan analisis data spasial"
         )
         description_label.setObjectName("descriptionLabel")
-        description_label.setFont(QFont("Montserrat", 12))
+        description_label.setFont(QFont("Montserrat", 12, QFont.Light))
         description_label.setAlignment(Qt.AlignCenter)
         content_layout.addWidget(logo_label)
         content_layout.addWidget(self.title_label)
@@ -545,10 +546,10 @@ class MenuWidget(BaseDialog):
                 border-radius: 20px;
             }}
             QLabel {{ color: white; }}
-            #titleLabel {{ font-size: 28px; font-weight: bold; }}
-            #subtitleLabel {{ font-size: 36px; font-weight: bold; }}
-            #descriptionLabel {{ font-size: 14px; color: #D0D0D0; }}
-            #aoiStatusLabel {{ font-size: 12px; color: #E0E0E0; font-style: italic; }}
+            #titleLabel {{ font-size: 18px; font-weight: 600; }}
+            #subtitleLabel {{ font-size: 22px; font-weight: 600; }}
+            #descriptionLabel {{ font-size: 16px; color: #FFFFFF; font-weight: 300; }}
+            #aoiStatusLabel {{ font-size: 12px; color: #FFFFFF; font-style: italic; font-weight: 300; }}
             
             #clearAoiButton {{
                 background-color: transparent;
@@ -584,18 +585,17 @@ class MenuWidget(BaseDialog):
             QMenu {{
                 background-color: #5E765F; color: white;
                 border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px; padding: 5px;
+                border-radius: 8px; padding: 6px;
             }}
             QMenu::item {{ padding: 8px 20px; border-radius: 4px; }}
             QMenu::item:selected {{ background-color: rgba(255, 255, 255, 0.15); }}
-            QMenu::separator {{ height: 1px; background: rgba(255, 255, 255, 0.2); margin: 5px 0px; }}
+            QMenu::separator {{ height: 1px; background: rgba(255, 255, 255, 0.2); margin: 6px 0px; }}
             #actionCard {{
-                background-color: rgba(255, 255, 255, 0.2);
-                border: 1px solid rgba(255, 255, 255, 0.4);
-                border-radius: 12px;
+                background-color: rgba(255, 255, 255, 0.4);
+                border-radius: 14px;
             }}
-            #actionCard:hover {{ background-color: rgba(255, 255, 255, 0.25); }}
-            #cardTitle {{ font-size: 14px; font-weight: bold; }}
-            #cardSubtitle {{ color: #D0D0D0; font-size: 11px;}}
+            #actionCard:hover {{ background-color: rgba(255, 255, 255, 0.6); box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.2); }}
+            #cardTitle {{ font-size: 14px; font-weight: bold; color: #FFFFFF; }}
+            #cardSubtitle {{ color: #D0D0D0; font-size: 11px; color: #FFFFFF; }}
         """
         self.setStyleSheet(qss)
