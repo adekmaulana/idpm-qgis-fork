@@ -219,7 +219,7 @@ class MenuWidget(BaseDialog):
         )  # NEW: Icon for AOI
 
         self.card_list_raster = ActionCard(
-            icon_path_raster, "List Raster", "View Detail"
+            icon_path_raster, "Citra Satelit", "View Detail"
         )
         self.card_open_potensi = ActionCard(
             icon_path_potensi, "Open Data Potensi", "View Detail"

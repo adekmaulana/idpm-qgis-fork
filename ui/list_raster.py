@@ -146,6 +146,7 @@ class RasterItemWidget(QWidget):
         title_layout.addWidget(self.spinner_widget)
         title_layout.addStretch()
 
+        details_layout.addStretch(1)
         details_layout.addLayout(title_layout)
         details_layout.addStretch(1)
 
@@ -154,7 +155,7 @@ class RasterItemWidget(QWidget):
             date_str = self.asset.capture_date.strftime("%d %b %Y %H:%M:%S")
         published_label = QLabel(f"Published on: {date_str}")
         published_label.setObjectName("rasterSubtitle")
-        cloud_label = QLabel(f"Cloud Cover: {self.asset.cloud_cover:.2f}%")
+        cloud_label = QLabel(f"{self.asset.cloud_cover:.2f}%")
         cloud_label.setObjectName("rasterCloud")
 
         details_layout.addWidget(published_label)
@@ -363,10 +364,8 @@ class RasterItemWidget(QWidget):
         else:
             self.btn_false_color.setText("Process False Color")
 
-        ndvi_exists = os.path.exists(ndvi_path) and os.path.getsize(ndvi_path) > 0
-        fc_exists = os.path.exists(fc_path) and os.path.getsize(fc_path) > 0
-
-        self.btn_select_aoi.setVisible(ndvi_exists and fc_exists)
+        # always hide the AOI button
+        self.btn_select_aoi.setVisible(False)
 
         self.progress_bar_visual.setVisible(False)
         self.bands_progress_container.setVisible(False)
@@ -466,7 +465,6 @@ class RasterItemWidget(QWidget):
 class ImageListDialog(BaseDialog):
     """Dialog to display a list of raster assets with filtering and pagination."""
 
-    # MODIFIED: Add 'aoi' parameter to constructor
     def __init__(
         self,
         data: List[Dict[str, Any]],
@@ -484,13 +482,13 @@ class ImageListDialog(BaseDialog):
         self.items_per_page = 5
         self.aoi_tool = None
         self.previous_map_tool = None
-        self.search_aoi = aoi  # NEW: Store the search AOI
+        self.search_aoi = aoi
         self.init_list_ui()
         self._apply_filters()
         add_basemap_global_osm(self.iface, zoom=False)
 
     def init_list_ui(self):
-        self.setWindowTitle("List Raster")
+        self.setWindowTitle("Citra Satelit")
         main_layout = QVBoxLayout(self.main_container)
         main_layout.setContentsMargins(30, 10, 30, 30)
         top_bar = self._create_top_bar()
@@ -499,10 +497,11 @@ class ImageListDialog(BaseDialog):
 
         header_layout = QHBoxLayout()
         title_vbox = QVBoxLayout()
-        title_vbox.addWidget(QLabel("List Raster", objectName="pageTitle"))
+        title_vbox.addWidget(QLabel("Citra Satelit", objectName="pageTitle"))
         title_vbox.addWidget(
             QLabel(
-                "Select raster data to download or process.", objectName="pageSubtitle"
+                "Pilih citra data untuk download atau proses.",
+                objectName="pageSubtitle",
             )
         )
         header_layout.addLayout(title_vbox)
@@ -537,21 +536,17 @@ class ImageListDialog(BaseDialog):
         self.apply_stylesheet()
 
     def _apply_filters(self):
-        # Start with the full list
         assets_to_filter = self.all_assets
 
-        # --- NEW: First, filter by the search AOI if it exists ---
         if self.search_aoi:
             aoi_filtered_assets = []
 
-            # Prepare for CRS transformation
             canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
             asset_crs = QgsCoordinateReferenceSystem("EPSG:4326")
             transform = QgsCoordinateTransform(
                 canvas_crs, asset_crs, QgsProject.instance()
             )
 
-            # Transform the search AOI to the assets' CRS (EPSG:4326)
             aoi_geom = QgsGeometry.fromRect(self.search_aoi)
             aoi_geom.transform(transform)
 
@@ -567,15 +562,13 @@ class ImageListDialog(BaseDialog):
                         )
                         + "))"
                     )
-                    # Check for intersection
                     if asset_geom.intersects(aoi_geom):
                         aoi_filtered_assets.append(asset)
                 except Exception:
-                    continue  # Skip assets with invalid geometry
+                    continue
 
             assets_to_filter = aoi_filtered_assets
 
-        # Then, filter by cloud cover
         filter_text = self.cloud_filter_combo.currentText()
         if filter_text == "All":
             self.filtered_assets = assets_to_filter
@@ -612,10 +605,14 @@ class ImageListDialog(BaseDialog):
 
     def _create_pagination_controls(self) -> QHBoxLayout:
         layout = QHBoxLayout()
-        self.prev_button = QPushButton("← Previous", objectName="paginationButton")
+        self.prev_button = QPushButton(
+            "← Previous", objectName="paginationButton", cursor=Qt.PointingHandCursor
+        )
         self.prev_button.clicked.connect(self.prev_page)
         self.page_label = QLabel("Page 1", objectName="pageLabel")
-        self.next_button = QPushButton("Next →", objectName="paginationButton")
+        self.next_button = QPushButton(
+            "Next →", objectName="paginationButton", cursor=Qt.PointingHandCursor
+        )
         self.next_button.clicked.connect(self.next_page)
         layout.addWidget(self.prev_button)
         layout.addStretch()
@@ -1359,8 +1356,8 @@ class ImageListDialog(BaseDialog):
             #closeButton { font-size: 24px; padding-bottom: 2px; }
             #minimizeButton:hover, #maximizeButton:hover, #closeButton:hover { background-color: rgba(0,0,0, 0.1); }
             #rasterItem { background-color: white; border: 1px solid #E9ECEF; border-radius: 12px; }
-            #rasterTitle { font-weight: bold; font-size: 16px; }
-            #rasterSubtitle { color: #6C757D; font-size: 12px; }
+            #rasterTitle { font-weight: bold; font-size: 16px; color: #333333; }
+            #rasterSubtitle { color: #808080; font-size: 12px; font-style: italic; }
             #rasterCloud { font-weight: bold; color: #274423; font-size: 12px; }
             #rasterStatus { font-weight: bold; font-size: 10px; color: #007BFF; }
             #noResultsLabel { color: #808080; font-size: 16px; font-style: italic; padding: 40px; }
