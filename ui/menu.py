@@ -470,6 +470,7 @@ class MenuWidget(BaseDialog):
             add_basemap_global_osm(self.iface)
 
             layer = load_existing_layer(selected_wilker, selected_year)
+            self.iface.setActiveLayer(layer)
 
             self.setEnabled(True)
             self.loading_dialog.hide()
