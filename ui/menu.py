@@ -39,7 +39,7 @@ from .profile import ProfileDialog
 from .loading import LoadingDialog
 from .custom_input_dialog import CustomInputDialog
 from .themed_message_box import ThemedMessageBox
-from ..core.database import load_existing_layer
+from ..core.database import load_existing_layer, load_potensi_layer
 from ..core.util import add_basemap_global_osm
 
 
@@ -233,6 +233,7 @@ class MenuWidget(BaseDialog):
         )
 
         self.card_list_raster.clicked.connect(self.open_image_list)
+        self.card_open_potensi.clicked.connect(self.open_potensi_data)
         self.card_open_existing.clicked.connect(self.open_existing_data)
         self.card_select_aoi.clicked.connect(
             self._handle_select_aoi_for_search
@@ -490,6 +491,57 @@ class MenuWidget(BaseDialog):
                     QMessageBox.Critical,
                     "Load Failed",
                     f"Could not load the 'Existing' data for {selected_year}. Please check the database connection and verify that the data exists.",
+                )
+
+    def open_potensi_data(self):
+        selected_wilker = self._get_selected_wilker()
+        if not selected_wilker:
+            return
+
+        current_year = datetime.now().year
+        years = [str(year) for year in range(2021, current_year + 1)]
+
+        dialog = CustomInputDialog(
+            self,
+            "Select Year",
+            f"Select a year for the 'Potensi' data in {selected_wilker}:",
+            years,
+        )
+
+        if dialog.exec_() == QDialog.Accepted:
+            selected_year_str = dialog.selectedItem()
+            selected_year = int(selected_year_str)
+
+            if self.loading_dialog is None:
+                self.loading_dialog = LoadingDialog(self)
+
+            self.setEnabled(False)
+            self.loading_dialog.show()
+            QApplication.processEvents()
+
+            add_basemap_global_osm(self.iface)
+
+            layer = load_potensi_layer(selected_wilker, selected_year)
+            self.iface.setActiveLayer(layer)
+
+            self.setEnabled(True)
+            self.loading_dialog.hide()
+
+            if layer is not None and layer.isValid():
+                ThemedMessageBox.show_message(
+                    self,
+                    QMessageBox.Information,
+                    "Success",
+                    f"Layer '{layer.name()}' loaded successfully.",
+                )
+                self.iface.mapCanvas().zoomToFeatureExtent(layer.extent())
+                self.iface.mapCanvas().refresh()
+            else:
+                ThemedMessageBox.show_message(
+                    self,
+                    QMessageBox.Critical,
+                    "Load Failed",
+                    f"Could not load the 'Potensi' data for {selected_year}. Please check the database connection and verify that the data exists.",
                 )
 
     def _load_and_apply_profile(self):
