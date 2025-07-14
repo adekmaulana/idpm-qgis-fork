@@ -1,16 +1,10 @@
 from typing import Optional
-from datetime import datetime
 from qgis.core import (
-    QgsVectorLayer,
     QgsDataSourceUri,
-    QgsProject,
     Qgis,
     QgsMessageLog,
-    QgsEditorWidgetSetup,
 )
-
 from ..config import Config
-from ..core.util import get_or_create_plugin_layer_group
 
 
 def create_db_uri(
@@ -68,96 +62,3 @@ def get_existing_qc_table_name(year: int) -> str:
     Returns the table name for the 'Existing QC' layer, e.g., 'existing_2024_qc'.
     """
     return f"existing_{year}_qc"
-
-
-def load_existing_layer(wilker_name: str, year: int) -> Optional[QgsVectorLayer]:
-    """
-    Loads the main 'Existing' vector layer for viewing and sets it up
-    with default values and a non-destructive save workflow.
-    """
-    table_name = get_existing_table_name(year)
-    layer_name = f"Existing {year} - {wilker_name}"
-
-    plugin_group = get_or_create_plugin_layer_group()
-    if plugin_group:
-        for child in plugin_group.children():
-            if hasattr(child, "name") and child.name() == layer_name:
-                QgsMessageLog.logMessage(
-                    f"Layer '{layer_name}' is already loaded.", "IDPMPlugin", Qgis.Info
-                )
-                return child.layer()
-
-    uri = create_db_uri(wilker_name, table_name, "geometry", "ogc_fid")
-    if not uri:
-        return None
-
-    layer = QgsVectorLayer(uri.uri(False), layer_name, "postgres")
-
-    if layer.isValid():
-        QgsProject.instance().addMapLayer(layer, False)
-        if plugin_group:
-            plugin_group.insertLayer(0, layer)
-        else:
-            QgsProject.instance().addMapLayer(layer)
-
-        QgsMessageLog.logMessage(
-            f"Successfully loaded layer: {layer_name} with default form values and QC workflow enabled.",
-            "IDPMPlugin",
-            Qgis.Success,
-        )
-        return layer
-    else:
-        QgsMessageLog.logMessage(
-            f"Layer '{layer_name}' failed to load. Please check your DB credentials, "
-            f"your network connection, and if table '{table_name}' exists in database '{wilker_name.lower().replace(' ', '_')}'. "
-            f"QGIS error: {layer.error().summary()}",
-            "IDPMPlugin",
-            Qgis.Critical,
-        )
-        return None
-
-
-def load_potensi_layer(wilker_name: str, year: int) -> Optional[QgsVectorLayer]:
-    """
-    Loads the main 'Potensi' vector layer for viewing.
-    """
-    table_name = get_potensi_table_name(year)
-    layer_name = f"Potensi {year} - {wilker_name}"
-
-    plugin_group = get_or_create_plugin_layer_group()
-    if plugin_group:
-        for child in plugin_group.children():
-            if hasattr(child, "name") and child.name() == layer_name:
-                QgsMessageLog.logMessage(
-                    f"Layer '{layer_name}' is already loaded.", "IDPMPlugin", Qgis.Info
-                )
-                return child.layer()
-
-    uri = create_db_uri(wilker_name, table_name, "geometry", "ogc_fid")
-    if not uri:
-        return None
-
-    layer = QgsVectorLayer(uri.uri(False), layer_name, "postgres")
-
-    if layer.isValid():
-        QgsProject.instance().addMapLayer(layer, False)
-        if plugin_group:
-            plugin_group.insertLayer(0, layer)
-        else:
-            QgsProject.instance().addMapLayer(layer)
-
-        QgsMessageLog.logMessage(
-            f"Successfully loaded layer: {layer_name}.",
-            "IDPMPlugin",
-            Qgis.Success,
-        )
-        return layer
-    else:
-        QgsMessageLog.logMessage(
-            f"Layer '{layer_name}' failed to load. Please check your DB credentials, "
-            f"your network connection, and if table '{table_name}' exists in database '{wilker_name.lower().replace(' ', '_')}'. "
-            f"QGIS error: {layer.error().summary()}",
-            "IDPMPlugin",
-            Qgis.Critical,
-        )
-        return None

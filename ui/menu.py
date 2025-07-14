@@ -25,6 +25,8 @@ from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkRepl
 from qgis.gui import QgisInterface
 from qgis.core import (
     Qgis,
+    QgsApplication,
+    QgsVectorLayer,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsMessageLog,
@@ -39,8 +41,8 @@ from .profile import ProfileDialog
 from .loading import LoadingDialog
 from .custom_input_dialog import CustomInputDialog
 from .themed_message_box import ThemedMessageBox
-from ..core.database import load_existing_layer, load_potensi_layer
 from ..core.util import add_basemap_global_osm
+from ..core.layer_loader_worker import LayerLoaderTask
 
 
 class ActionCard(QWidget):
@@ -135,8 +137,8 @@ class MenuWidget(BaseDialog):
         self.loading_dialog = None
         self.user_profile = {}
         self.main_bg_path = os.path.join(Config.ASSETS_PATH, "images", "menu_bg.jpg")
+        self.active_loader_task = None
 
-        # NEW: Attributes for AOI pre-filtering
         self.aoi_tool = None
         self.previous_map_tool = None
         self.selected_aoi: Optional[QgsRectangle] = None
@@ -214,9 +216,7 @@ class MenuWidget(BaseDialog):
         icon_path_raster = os.path.join(Config.ASSETS_PATH, "images", "image.svg")
         icon_path_potensi = os.path.join(Config.ASSETS_PATH, "images", "maps.svg")
         icon_path_existing = os.path.join(Config.ASSETS_PATH, "images", "world.svg")
-        icon_path_aoi = os.path.join(
-            Config.ASSETS_PATH, "images", "focus.svg"
-        )  # NEW: Icon for AOI
+        icon_path_aoi = os.path.join(Config.ASSETS_PATH, "images", "focus.svg")
 
         self.card_list_raster = ActionCard(
             icon_path_raster, "Citra Satelit", "View Detail"
@@ -227,7 +227,6 @@ class MenuWidget(BaseDialog):
         self.card_open_existing = ActionCard(
             icon_path_existing, "Open Data Existing", "View Detail"
         )
-        # NEW: Create the AOI selection card
         self.card_select_aoi = ActionCard(
             icon_path_aoi, "Select AOI for Search", "Define Area"
         )
@@ -235,17 +234,14 @@ class MenuWidget(BaseDialog):
         self.card_list_raster.clicked.connect(self.open_image_list)
         self.card_open_potensi.clicked.connect(self.open_potensi_data)
         self.card_open_existing.clicked.connect(self.open_existing_data)
-        self.card_select_aoi.clicked.connect(
-            self._handle_select_aoi_for_search
-        )  # NEW: Connect signal
+        self.card_select_aoi.clicked.connect(self._handle_select_aoi_for_search)
 
         button_layout.addWidget(self.card_list_raster)
         button_layout.addWidget(self.card_open_potensi)
         button_layout.addWidget(self.card_open_existing)
-        button_layout.addWidget(self.card_select_aoi)  # NEW: Add card to layout
+        button_layout.addWidget(self.card_select_aoi)
         content_layout.addWidget(button_container)
 
-        # NEW: Add status label and clear button for AOI
         aoi_status_layout = QHBoxLayout()
         aoi_status_layout.setAlignment(Qt.AlignCenter)
         self.aoi_status_label = QLabel("No Area of Interest (AOI) selected.")
@@ -266,9 +262,7 @@ class MenuWidget(BaseDialog):
         main_layout.addStretch(2)
         self.apply_stylesheet()
 
-    # NEW: Handler to start the AOI selection process
     def _handle_select_aoi_for_search(self):
-        # Load base map if not already loaded
         add_basemap_global_osm(self.iface, zoom=False)
 
         self.hide()
@@ -287,7 +281,6 @@ class MenuWidget(BaseDialog):
         self.iface.mapCanvas().setMapTool(self.aoi_tool)
         self.iface.mapCanvas().setFocus()
 
-    # NEW: Handler for when the AOI is successfully drawn
     def _on_aoi_selected_for_search(self, aoi_rect: QgsRectangle):
         self.selected_aoi = aoi_rect
         self._restore_map_tool_and_show()
@@ -300,14 +293,12 @@ class MenuWidget(BaseDialog):
             "The search area has been defined. Now click 'List Raster' to find intersecting images.",
         )
 
-    # NEW: Handler for when the user cancels drawing
     def _on_aoi_cancelled(self):
         self._restore_map_tool_and_show()
         self.iface.messageBar().pushMessage(
             "Info", "AOI selection cancelled.", level=Qgis.Info, duration=3
         )
 
-    # NEW: Helper to clean up the map tool and show the menu again
     def _restore_map_tool_and_show(self):
         self.iface.mapCanvas().setMapTool(self.previous_map_tool)
         self.aoi_tool = None
@@ -316,7 +307,6 @@ class MenuWidget(BaseDialog):
         self.raise_()
         self.activateWindow()
 
-    # NEW: Method to clear the selected AOI
     def _clear_aoi(self):
         self.selected_aoi = None
         self.aoi_status_label.setText("No Area of Interest (AOI) selected.")
@@ -383,6 +373,7 @@ class MenuWidget(BaseDialog):
             self.loading_dialog = LoadingDialog(self)
         self.setEnabled(False)
         self.loading_dialog.show()
+        self.hide()
 
         request_url = f"{Config.API_URL}/geoportal/sentinel/catalog/{selected_wilker}"
         request = QNetworkRequest(QUrl(request_url))
@@ -409,6 +400,7 @@ class MenuWidget(BaseDialog):
                 "Error",
                 f"Failed to fetch image list: {reply.errorString()}",
             )
+            self.show()
             return
 
         response_data = reply.readAll().data()
@@ -417,12 +409,10 @@ class MenuWidget(BaseDialog):
             features = response.get("data", {}).get("features", [])
 
             if self.image_list_dialog is None:
-                # MODIFIED: Pass the selected AOI to the ImageListDialog
                 self.image_list_dialog = ImageListDialog(
                     features, self.iface, self.iface.mainWindow(), aoi=self.selected_aoi
                 )
                 self.image_list_dialog.finished.connect(self._on_image_list_closed)
-                self.hide()
                 self.image_list_dialog.show()
             else:
                 self.image_list_dialog.raise_()
@@ -435,12 +425,84 @@ class MenuWidget(BaseDialog):
                 "Error",
                 f"An unexpected error occurred: {e}",
             )
+            self.show()
         finally:
             reply.deleteLater()
 
     def _on_image_list_closed(self):
         self.show()
         self.image_list_dialog = None
+
+    def _start_layer_load_task(
+        self, layer_type: str, selected_wilker: str, selected_year: int
+    ):
+        if self.loading_dialog is None:
+            self.loading_dialog = LoadingDialog(self.parent())
+        self.setEnabled(False)
+        self.loading_dialog.show()
+        self.hide()
+
+        add_basemap_global_osm(self.iface)
+
+        self.active_loader_task = LayerLoaderTask(
+            f"Loading {layer_type} data...",
+            layer_type,
+            selected_wilker,
+            selected_year,
+        )
+
+        self.active_loader_task.layerLoaded.connect(self._on_layer_loaded)
+        self.active_loader_task.errorOccurred.connect(self._on_layer_load_error)
+
+        QgsApplication.taskManager().addTask(self.active_loader_task)
+
+    def _on_layer_loaded(self, layer: QgsVectorLayer):
+        self.setEnabled(True)
+        if self.loading_dialog:
+            self.loading_dialog.close()
+
+        if layer and layer.isValid():
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Information,
+                "Success",
+                f"Layer '{layer.name()}' loaded successfully.",
+            )
+            self.iface.setActiveLayer(layer)
+
+            # --- START: RELIABLE ZOOM IMPLEMENTATION ---
+            def perform_zoom():
+                canvas = self.iface.mapCanvas()
+                source_crs = layer.crs()
+                dest_crs = canvas.mapSettings().destinationCrs()
+                transform = QgsCoordinateTransform(
+                    source_crs, dest_crs, QgsProject.instance()
+                )
+                transformed_extent = transform.transform(layer.extent())
+
+                canvas.setExtent(transformed_extent)
+                canvas.refresh()
+
+            QTimer.singleShot(100, perform_zoom)
+            # --- END: RELIABLE ZOOM IMPLEMENTATION ---
+
+        else:
+            self._on_layer_load_error("Loaded layer is invalid.")
+
+        self.active_loader_task = None
+
+    def _on_layer_load_error(self, error_message: str):
+        self.setEnabled(True)
+        if self.loading_dialog:
+            self.loading_dialog.close()
+        ThemedMessageBox.show_message(
+            self,
+            QMessageBox.Critical,
+            "Load Failed",
+            f"Could not load the layer: {error_message}",
+        )
+        self.show()
+        self.active_loader_task = None
 
     def open_existing_data(self):
         selected_wilker = self._get_selected_wilker()
@@ -460,38 +522,7 @@ class MenuWidget(BaseDialog):
         if dialog.exec_() == QDialog.Accepted:
             selected_year_str = dialog.selectedItem()
             selected_year = int(selected_year_str)
-
-            if self.loading_dialog is None:
-                self.loading_dialog = LoadingDialog(self)
-
-            self.setEnabled(False)
-            self.loading_dialog.show()
-            QApplication.processEvents()
-
-            add_basemap_global_osm(self.iface)
-
-            layer = load_existing_layer(selected_wilker, selected_year)
-            self.iface.setActiveLayer(layer)
-
-            self.setEnabled(True)
-            self.loading_dialog.hide()
-
-            if layer is not None and layer.isValid():
-                ThemedMessageBox.show_message(
-                    self,
-                    QMessageBox.Information,
-                    "Success",
-                    f"Layer '{layer.name()}' loaded successfully.",
-                )
-                self.iface.mapCanvas().zoomToFeatureExtent(layer.extent())
-                self.iface.mapCanvas().refresh()
-            else:
-                ThemedMessageBox.show_message(
-                    self,
-                    QMessageBox.Critical,
-                    "Load Failed",
-                    f"Could not load the 'Existing' data for {selected_year}. Please check the database connection and verify that the data exists.",
-                )
+            self._start_layer_load_task("existing", selected_wilker, selected_year)
 
     def open_potensi_data(self):
         selected_wilker = self._get_selected_wilker()
@@ -511,38 +542,7 @@ class MenuWidget(BaseDialog):
         if dialog.exec_() == QDialog.Accepted:
             selected_year_str = dialog.selectedItem()
             selected_year = int(selected_year_str)
-
-            if self.loading_dialog is None:
-                self.loading_dialog = LoadingDialog(self)
-
-            self.setEnabled(False)
-            self.loading_dialog.show()
-            QApplication.processEvents()
-
-            add_basemap_global_osm(self.iface)
-
-            layer = load_potensi_layer(selected_wilker, selected_year)
-            self.iface.setActiveLayer(layer)
-
-            self.setEnabled(True)
-            self.loading_dialog.hide()
-
-            if layer is not None and layer.isValid():
-                ThemedMessageBox.show_message(
-                    self,
-                    QMessageBox.Information,
-                    "Success",
-                    f"Layer '{layer.name()}' loaded successfully.",
-                )
-                self.iface.mapCanvas().zoomToFeatureExtent(layer.extent())
-                self.iface.mapCanvas().refresh()
-            else:
-                ThemedMessageBox.show_message(
-                    self,
-                    QMessageBox.Critical,
-                    "Load Failed",
-                    f"Could not load the 'Potensi' data for {selected_year}. Please check the database connection and verify that the data exists.",
-                )
+            self._start_layer_load_task("potensi", selected_wilker, selected_year)
 
     def _load_and_apply_profile(self):
         settings = QSettings()
