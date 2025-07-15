@@ -1,12 +1,10 @@
-from typing import Optional, Dict, Any
-
 from qgis.core import (
+    QgsFieldConstraints,
     QgsTask,
     QgsVectorLayer,
-    Qgis,
-    QgsMessageLog,
     QgsEditorWidgetSetup,
     QgsProject,
+    QgsDefaultValue,
 )
 from PyQt5.QtCore import pyqtSignal
 
@@ -23,12 +21,10 @@ class LayerLoaderTask(QgsTask):
     A QGIS task to load a vector layer from PostGIS in the background.
     """
 
-    # Signal to emit when the layer is successfully loaded
-    # It passes the QgsVectorLayer object
     layerLoaded = pyqtSignal(QgsVectorLayer)
-
-    # Signal to emit when an error occurs
     errorOccurred = pyqtSignal(str)
+
+    layer: QgsVectorLayer
 
     def __init__(
         self,
@@ -73,16 +69,110 @@ class LayerLoaderTask(QgsTask):
                 return False
 
             if self.layer.isValid():
-                # Apply custom form widgets if the layer is 'existing'
+                form_config = self.layer.editFormConfig()
+
+                # --- START: SET ALL FIELDS TO NOT NULL ---
+                for field in self.layer.fields():
+                    field_name = field.name()
+                    # Skip certain fields from being set to NOT NULL
+                    # as they may not be applicable or required.
+                    if field_name in [
+                        "ogc_fid",
+                        "remark",
+                        "alasan",
+                        "klshtn",
+                        "namobj",
+                        "fcode",
+                        "lcode",
+                    ]:
+                        continue
+
+                    idx = self.layer.fields().indexOf(field_name)
+                    self.layer.setFieldConstraint(
+                        idx, QgsFieldConstraints.ConstraintNotNull
+                    )
+                # --- END: SET ALL FIELDS TO NOT NULL ---
+
+                # --- Configure ogc_fid field ---
+                ogc_fid_index = self.layer.fields().indexOf("ogc_fid")
+                if ogc_fid_index != -1:
+                    expression = (
+                        'IF ("ogc_fid" is NULL, maximum("ogc_fid") + 1, "ogc_fid")'
+                    )
+                    default_value_definition = QgsDefaultValue()
+                    default_value_definition.setExpression(expression=expression)
+                    default_value_definition.setApplyOnUpdate(True)
+                    self.layer.setDefaultValueDefinition(
+                        ogc_fid_index, default_value_definition
+                    )
+                    widget_setup = QgsEditorWidgetSetup(
+                        "TextEdit", {"isEditable": False, "showClearButton": False}
+                    )
+                    self.layer.setEditorWidgetSetup(ogc_fid_index, widget_setup)
+                    form_config.setReadOnly(ogc_fid_index, True)
+
+                # --- START: BPDAS AUTO-FILL IMPLEMENTATION ---
+                bpdas_index = self.layer.fields().indexOf("bpdas")
+                if bpdas_index != -1:
+                    # 1. Set the default value to the wilker name. Note the single quotes.
+                    default_value_definition = QgsDefaultValue(f"'{self.wilker_name}'")
+
+                    # 2. Apply the default value definition to the field.
+                    self.layer.setDefaultValueDefinition(
+                        bpdas_index, default_value_definition
+                    )
+
+                    # 3. Make the field non-editable in the form.
+                    widget_setup = QgsEditorWidgetSetup(
+                        "TextEdit", {"isEditable": False, "showClearButton": False}
+                    )
+                    self.layer.setEditorWidgetSetup(bpdas_index, widget_setup)
+                    form_config.setReadOnly(bpdas_index, True)
+                # --- END: BPDAS AUTO-FILL IMPLEMENTATION ---
+
+                # --- START: Remark Field Configuration ---
+                remark_index = self.layer.fields().indexOf("remark")
+                if remark_index != -1:
+                    # 1. Set the default value to the wilker name. Note the single quotes.
+                    default_value_definition = QgsDefaultValue(f"'TIDAK ADA CATATAN'")
+
+                    # 2. Apply the default value definition to the field.
+                    self.layer.setDefaultValueDefinition(
+                        remark_index, default_value_definition
+                    )
+                    widget_setup = QgsEditorWidgetSetup(
+                        "TextEdit", {"isEditable": True, "showClearButton": True}
+                    )
+                    self.layer.setEditorWidgetSetup(remark_index, widget_setup)
+                # --- END: Remark Field Configuration ---
+
+                # --- START: INTS FIELD CONFIGURATION ---
+                ints_index = self.layer.fields().indexOf("ints")
+                if ints_index != -1:
+                    # 1. Set the default value to the wilker name. Note the single quotes.
+                    default_value_definition = QgsDefaultValue(f"'KLHK'")
+
+                    # 2. Apply the default value definition to the field.
+                    self.layer.setDefaultValueDefinition(
+                        ints_index, default_value_definition
+                    )
+                    widget_setup = QgsEditorWidgetSetup(
+                        "TextEdit", {"isEditable": True, "showClearButton": True}
+                    )
+                    self.layer.setEditorWidgetSetup(ints_index, widget_setup)
+                # --- END: INTS FIELD CONFIGURATION ---
+
                 if self.layer_type == "existing":
                     self.setup_existing_layer_form()
+
+                self.layer.setEditFormConfig(form_config)
                 return True
-            else:
-                self.exception = Exception(
-                    f"Layer '{layer_name}' failed to load. "
-                    f"QGIS error: {self.layer.error().summary()}"
-                )
-                return False
+
+            self.exception = Exception(
+                f"Layer '{layer_name}' failed to load. "
+                f"QGIS error: {self.layer.error().summary()}"
+            )
+            return False
 
         except Exception as e:
             self.exception = e
@@ -90,22 +180,72 @@ class LayerLoaderTask(QgsTask):
 
     def setup_existing_layer_form(self):
         """Sets up the custom attribute form for the 'existing' layer."""
-        field_index = self.layer.fields().indexOf("kttj")
-        if field_index != -1:
+        kttj_index = self.layer.fields().indexOf("kttj")
+        if kttj_index != -1:
             kttj_options = {
                 "Mangrove Lebat": "Mangrove Lebat",
-                "Mangrove Lebat": "Mangrove Lebat",
-                "Mangrove Lebat": "Mangrove Lebat",
+                "Mangrove Sedang": "Mangrove Sedang",
+                "Mangrove Jarang": "Mangrove Jarang",
             }
             widget_setup = QgsEditorWidgetSetup("ValueMap", {"map": kttj_options})
-            self.layer.setEditorWidgetSetup(field_index, widget_setup)
+            self.layer.setEditorWidgetSetup(kttj_index, widget_setup)
+
+        struktur_v_index = self.layer.fields().indexOf("struktur_v")
+        if struktur_v_index != -1:
+            struktur_v_options = {
+                "Dominasi Pohon": "DOMINASI POHON",
+                "Dominasi Non Pohon": "DOMINASI NON POHON",
+            }
+            widget_setup = QgsEditorWidgetSetup("ValueMap", {"map": struktur_v_options})
+            self.layer.setEditorWidgetSetup(struktur_v_index, widget_setup)
+
+        konservasi_index = self.layer.fields().indexOf("konservasi")
+        if konservasi_index != -1:
+            konservasi_options = {
+                "Bukan Kawasan Konservasi": "Bukan Kawasan Konservasi",
+                "Kawasan Konservasi": "Kawasan Konservasi",
+            }
+            widget_setup = QgsEditorWidgetSetup("ValueMap", {"map": konservasi_options})
+            self.layer.setEditorWidgetSetup(konservasi_index, widget_setup)
+
+        # # Define a common UTM zone for Indonesia for accurate measurements
+        # # EPSG:32748 is WGS 84 / UTM zone 48S, suitable for much of Indonesia.
+        # # This can be adjusted if a different zone is more appropriate for all BPDAS areas.
+        # utm_zone_crs = "EPSG:32748"
+        # source_crs = self.layer.crs().authid()
+
+        # # Configure shape_leng
+        # shape_leng_index = self.layer.fields().indexOf("shape_leng")
+        # if shape_leng_index != -1:
+        #     expression = (
+        #         f"perimeter(transform($geometry, '{source_crs}', '{utm_zone_crs}'))"
+        #     )
+        #     default_value = QgsDefaultValue(expression)
+        #     self.layer.setDefaultValueDefinition(shape_leng_index, default_value)
+
+        # # Configure shape_area
+        # shape_area_index = self.layer.fields().indexOf("shape_area")
+        # if shape_area_index != -1:
+        #     expression = (
+        #         f"area(transform($geometry, '{source_crs}', '{utm_zone_crs}')) / 10000"
+        #     )
+        #     default_value = QgsDefaultValue(expression)
+        #     self.layer.setDefaultValueDefinition(shape_area_index, default_value)
+
+        # # Configure lsmgr
+        # lsmgr_index = self.layer.fields().indexOf("lsmgr")
+        # if lsmgr_index != -1:
+        #     expression = (
+        #         f"area(transform($geometry, '{source_crs}', '{utm_zone_crs}')) / 10000"
+        #     )
+        #     default_value = QgsDefaultValue(expression)
+        #     self.layer.setDefaultValueDefinition(lsmgr_index, default_value)
 
     def finished(self, result):
         """
         Called on the main thread when the task is finished.
         """
         if result:
-            # Add the layer to the project in the main thread
             plugin_group = get_or_create_plugin_layer_group()
             QgsProject.instance().addMapLayer(self.layer, False)
             if plugin_group:
