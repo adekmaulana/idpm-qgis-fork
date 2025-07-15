@@ -84,6 +84,7 @@ class LayerLoaderTask(QgsTask):
                         "namobj",
                         "fcode",
                         "lcode",
+                        "objectid",
                     ]:
                         continue
 
@@ -164,6 +165,8 @@ class LayerLoaderTask(QgsTask):
 
                 if self.layer_type == "existing":
                     self.setup_existing_layer_form()
+                elif self.layer_type == "potensi":
+                    self.setup_potensi_layer_form()
 
                 self.layer.setEditFormConfig(form_config)
                 return True
@@ -240,6 +243,13 @@ class LayerLoaderTask(QgsTask):
         #     )
         #     default_value = QgsDefaultValue(expression)
         #     self.layer.setDefaultValueDefinition(lsmgr_index, default_value)
+
+    def setup_potensi_layer_form(self):
+        objectid_index = self.layer.fields().indexOf("objectid")
+        if objectid_index != -1:
+            # Hide the objectid field in the form
+            widget_setup = QgsEditorWidgetSetup("Hidden", {})
+            self.layer.setEditorWidgetSetup(objectid_index, widget_setup)
 
     def finished(self, result):
         """
