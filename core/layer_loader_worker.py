@@ -251,6 +251,18 @@ class LayerLoaderTask(QgsTask):
             widget_setup = QgsEditorWidgetSetup("Hidden", {})
             self.layer.setEditorWidgetSetup(objectid_index, widget_setup)
 
+        utm_zone_crs = "EPSG:32748"
+        source_crs = self.layer.crs().authid()
+
+        # Configure luas
+        luas_index = self.layer.fields().indexOf("luas")
+        if luas_index != -1:
+            expression = (
+                f"area(transform($geometry, '{source_crs}', '{utm_zone_crs}')) / 10000"
+            )
+            default_value = QgsDefaultValue(expression)
+            self.layer.setDefaultValueDefinition(luas_index, default_value)
+
     def finished(self, result):
         """
         Called on the main thread when the task is finished.
