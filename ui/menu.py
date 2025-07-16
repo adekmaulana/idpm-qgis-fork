@@ -440,7 +440,6 @@ class MenuWidget(BaseDialog):
             self.loading_dialog = LoadingDialog(self.parent())
         self.setEnabled(False)
         self.loading_dialog.show()
-        self.hide()
 
         add_basemap_global_osm(self.iface)
 
@@ -501,7 +500,6 @@ class MenuWidget(BaseDialog):
             "Load Failed",
             f"Could not load the layer: {error_message}",
         )
-        self.show()
         self.active_loader_task = None
 
     def open_existing_data(self):
