@@ -155,7 +155,7 @@ class RasterItemWidget(QWidget):
             date_str = self.asset.capture_date.strftime("%d %b %Y %H:%M:%S")
         published_label = QLabel(f"Published on: {date_str}")
         published_label.setObjectName("rasterSubtitle")
-        cloud_label = QLabel(f"{self.asset.cloud_cover:.2f}%")
+        cloud_label = QLabel(f"Cloud Cover: {self.asset.cloud_cover:.2f}%")
         cloud_label.setObjectName("rasterCloud")
 
         details_layout.addWidget(published_label)
