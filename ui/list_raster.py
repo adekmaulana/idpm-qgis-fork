@@ -1381,11 +1381,40 @@ class ImageListDialog(BaseDialog):
         """
         self.setStyleSheet(qss)
 
-    def closeEvent(self, event):
+    def _cancel_all_operations(self):
+        """
+        A centralized method to cancel all ongoing network requests and tasks.
+        """
         if self.aoi_tool:
             self._on_aoi_cancelled()
-        for stac_id in list(self.active_operations.keys()):
-            self._handle_cancel_operation_requested(stac_id.split("_")[0])
+
+        op_keys_to_cancel = list(self.active_operations.keys())
+
+        if op_keys_to_cancel:
+            QgsMessageLog.logMessage(
+                f"Closing dialog. Cancelling {len(op_keys_to_cancel)} active operations.",
+                "IDPMPlugin",
+                Qgis.Info,
+            )
+
+        for op_key in op_keys_to_cancel:
+            stac_id = op_key.split("_")[0]
+            self._handle_cancel_operation_requested(stac_id)
+
+    def reject(self):
+        """
+        Override reject() to ensure operations are cancelled when the dialog is
+        closed via the 'X' button or ESC key.
+        """
+        self._cancel_all_operations()
+        super().reject()
+
+    def closeEvent(self, event):
+        """
+        Override closeEvent to handle closing from sources other than buttons
+        (e.g., system close).
+        """
+        self._cancel_all_operations()
         super().closeEvent(event)
 
     def showEvent(self, event):
