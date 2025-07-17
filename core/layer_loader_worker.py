@@ -266,6 +266,11 @@ class LayerLoaderTask(QgsTask):
             widget_setup = QgsEditorWidgetSetup("ValueMap", {"map": konservasi_options})
             self.layer.setEditorWidgetSetup(konservasi_index, widget_setup)
 
+        srs_id_index = self.layer.fields().indexOf("srs_id")
+        if srs_id_index != -1:
+            default_value = QgsDefaultValue("'4326'")
+            self.layer.setDefaultValueDefinition(srs_id_index, default_value)
+
         # Define a common UTM zone for Indonesia for accurate measurements
         # EPSG:32748 is WGS 84 / UTM zone 48S, suitable for much of Indonesia.
         # This can be adjusted if a different zone is more appropriate for all BPDAS areas.
