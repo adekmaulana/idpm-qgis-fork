@@ -155,6 +155,9 @@ class LayerLoaderTask(QgsTask):
                             expression,
                             description="Luas minimum adalah 0.0625 ha",
                         )
+
+                        # Set Read-Only for shape_area and lsmgr
+                        form_config.setReadOnly(idx, True)
                     elif field_name in ["shape_leng", "luas"]:
                         expression = f'"{field_name}" >= 0'
                         self.layer.setConstraintExpression(
@@ -162,6 +165,7 @@ class LayerLoaderTask(QgsTask):
                             expression,
                             description="Panjang/Luas tidak boleh negatif",
                         )
+                        form_config.setReadOnly(idx, True)
                 # --- END: SET ALL FIELDS TO NOT NULL ---
 
                 # --- Configure ogc_fid field ---
