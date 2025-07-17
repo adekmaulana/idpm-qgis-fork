@@ -43,7 +43,8 @@ class Config:
     )
 
     # --- API Settings ---
-    API_URL = os.getenv("API_URL", "https://demo.ptnaghayasha.com/api")
+    API_URL = os.getenv("API_URL", "https://api-idpm.vercel.app/api")
+    FRONT_END_URL = os.getenv("FRONT_END_URL", "https://demo.ptnaghayasha.com")
 
     # --- QGIS Settings ---
     IDPM_PLUGIN_GROUP_NAME = "IDPM Layers"

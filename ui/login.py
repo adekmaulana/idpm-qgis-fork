@@ -133,7 +133,7 @@ class LoginWidget(BaseDialog):
 
         try:
             response_json = json.loads(response_data.data().decode("utf-8"))
-            if not response_json.get("status"):
+            if not response_json.get("success", False):
                 error_msg = response_json.get(
                     "msg", "Invalid credentials or unknown error."
                 )

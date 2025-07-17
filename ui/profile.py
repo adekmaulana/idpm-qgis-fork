@@ -261,9 +261,7 @@ class ProfileDialog(BaseDialog):
             self.phone_label.setText(self.user_profile.get("phone", "N/A"))
 
             # --- Populate Working Area ---
-            wilker_str = self.user_profile.get("wilker", "")
-            wilker_list = [w.strip() for w in wilker_str.split(",") if w.strip()]
-
+            wilker_list = self.user_profile.get("allowed", [])
             for i in reversed(range(self.wa_grid_layout.count())):
                 self.wa_grid_layout.itemAt(i).widget().setParent(None)
 

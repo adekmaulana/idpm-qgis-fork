@@ -319,10 +319,7 @@ class MenuWidget(BaseDialog):
             )
             return None
         try:
-            wilker_str = self.user_profile.get("wilker", "")
-            wilker_list = sorted(
-                [w.strip() for w in wilker_str.split(",") if w.strip()]
-            )
+            wilker_list = sorted(self.user_profile.get("allowed", []))
             if not wilker_list:
                 ThemedMessageBox.show_message(
                     self,
@@ -375,7 +372,10 @@ class MenuWidget(BaseDialog):
         self.loading_dialog.show()
         self.hide()
 
-        request_url = f"{Config.API_URL}/geoportal/sentinel/catalog/{selected_wilker}"
+        # Different API URL use FRONT_END_URL for catalog requests add /api
+        request_url = (
+            f"{Config.FRONT_END_URL}/api/geoportal/sentinel/catalog/{selected_wilker}"
+        )
         request = QNetworkRequest(QUrl(request_url))
         request.setRawHeader(b"Authorization", f"Bearer {token}".encode())
         self.network_manager.finished.connect(self.handle_catalog_list_response)
