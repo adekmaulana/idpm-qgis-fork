@@ -38,6 +38,9 @@ def create_db_uri(
     db_name_lower = wilker_name.lower().replace(" ", "")
 
     uri.setConnection(db_host, db_port, db_name_lower, db_user, db_password)
+
+    uri.setParam("connect_timeout", "90")
+
     uri.setDataSource("public", table, geom_col, "", pkey)
 
     return uri
