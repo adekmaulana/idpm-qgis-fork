@@ -147,6 +147,21 @@ class LayerLoaderTask(QgsTask):
                     self.layer.setFieldConstraint(
                         idx, QgsFieldConstraints.ConstraintNotNull
                     )
+
+                    if field_name in ["shape_area", "lsmgr"]:
+                        expression = f'"{field_name}" >= 0.0625'
+                        self.layer.setConstraintExpression(
+                            idx,
+                            expression,
+                            description="Luas minimum adalah 0.0625 ha",
+                        )
+                    elif field_name in ["shape_leng", "luas"]:
+                        expression = f'"{field_name}" >= 0'
+                        self.layer.setConstraintExpression(
+                            idx,
+                            expression,
+                            description="Panjang/Luas tidak boleh negatif",
+                        )
                 # --- END: SET ALL FIELDS TO NOT NULL ---
 
                 # --- Configure ogc_fid field ---
