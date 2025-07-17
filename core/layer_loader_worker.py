@@ -74,6 +74,46 @@ class LayerLoaderTask(QgsTask):
                 # --- START: SET ALL FIELDS TO NOT NULL ---
                 for field in self.layer.fields():
                     field_name = field.name()
+                    idx = self.layer.fields().indexOf(field_name)
+                    alias_map = {
+                        "ogc_fid": "FID",
+                        "bpdas": "BPDAS",
+                        "kttj": "Kelas Tutupan Tajuk",
+                        "smbdt": "Sumber Data",
+                        "thnbuat": "Tahun Buat",
+                        "ints": "Institusi",
+                        "remark": "Catatan (Remark)",
+                        "struktur_v": "Struktur Vegetasi",
+                        "lsmgr": "Luas Mangrove",
+                        "shape_leng": "Panjang Garis",
+                        "shape_area": "Luas Area",
+                        "namobj": "Nama Objek",
+                        "fcode": "Kode Fitur",
+                        "lcode": "Kode Lokasi",
+                        "srs_id": "SRS ID",
+                        "metadata": "Metadata",
+                        "kode_prov": "Kode Provinsi",
+                        "fungsikws": "Fungsi Kawasan",
+                        "noskkws": "Nomor SK Kawasan",
+                        "tglskkws": "Tanggal SK Kawasan",
+                        "lskkws": "Luas SK Kawasan",
+                        "kawasan": "Kawasan",
+                        "konservasi": "Kawasan Konservasi",
+                        "kab": "Kabupaten",
+                        "prov": "Provinsi",  # End of alias Existing
+                        "tahun": "Tahun",
+                        "smbrdt": "Sumber Data",
+                        "ktrgn": "Keterangan",
+                        "keterangan": "Keterangan",
+                        "alasan": "Alasan",
+                        "klshtn": "Kelas Hutan",
+                        "kws": "Kawasan",
+                        "luas": "Luas",
+                    }
+
+                    if alias_map.get(field_name) is not None:
+                        self.layer.setFieldAlias(idx, alias_map[field_name])
+
                     # Skip certain fields from being set to NOT NULL
                     # as they may not be applicable or required.
                     if field_name in [
@@ -84,11 +124,26 @@ class LayerLoaderTask(QgsTask):
                         "namobj",
                         "fcode",
                         "lcode",
+                        "srs_id",
+                        "metadata",
+                        "kode_prov",
+                        "fungsikws",
+                        "noskkws",
+                        "tglskkws",
+                        "lskkws",
+                        "kawasan",
+                        "konservasi",
+                        "kab",
+                        "prov",
                         "objectid",
+                        "ktrgn",
+                        "keterangan",
+                        "klshtn",
+                        "kws",
+                        "tahun",
                     ]:
                         continue
 
-                    idx = self.layer.fields().indexOf(field_name)
                     self.layer.setFieldConstraint(
                         idx, QgsFieldConstraints.ConstraintNotNull
                     )
@@ -262,6 +317,19 @@ class LayerLoaderTask(QgsTask):
             )
             default_value = QgsDefaultValue(expression)
             self.layer.setDefaultValueDefinition(luas_index, default_value)
+
+        # Configure ktrgn
+        ktrgn_index = self.layer.fields().indexOf("ktrgn")
+        if ktrgn_index != -1:
+            ktrgn_options = {
+                "Mangrove Terabrasi": "MANGROVE TERABRASI",
+                "Tanah Timbul": "TANAH TIMBUL",
+                "Lahan Terbuka": "LAHAN TERBUKA",
+                "Tambak": "TAMBAK",
+                "Area Terabrasi": "AREA TERABRASI",
+            }
+            widget_setup = QgsEditorWidgetSetup("ValueMap", {"map": ktrgn_options})
+            self.layer.setEditorWidgetSetup(ktrgn_index, widget_setup)
 
     def finished(self, result):
         """
