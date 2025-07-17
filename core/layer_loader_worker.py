@@ -1,4 +1,7 @@
+import json
 from qgis.core import (
+    Qgis,
+    QgsMessageLog,
     QgsFieldConstraints,
     QgsTask,
     QgsVectorLayer,
@@ -6,8 +9,10 @@ from qgis.core import (
     QgsProject,
     QgsDefaultValue,
 )
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import QUrl, QSettings, QEventLoop, pyqtSignal
+from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
+from ..config import Config
 from .database import (
     create_db_uri,
     get_existing_table_name,
@@ -40,11 +45,81 @@ class LayerLoaderTask(QgsTask):
         self.exception = None
         self.layer = None
 
+    def _fetch_province(self) -> tuple[str, int]:
+        """
+        Synchronously fetches the province name and ID from the API.
+        This runs in the worker thread.
+
+        Returns:
+            A tuple containing the province name (str) and province ID (int).
+        """
+        settings = QSettings()
+        token = settings.value("IDPMPlugin/token", None)
+        if not token:
+            QgsMessageLog.logMessage(
+                "No auth token found, cannot fetch province.",
+                "IDPMPlugin",
+                Qgis.Warning,
+            )
+            return "", 0
+
+        url = f"{Config.API_URL}/bpdas/{self.wilker_name}/province"
+        req = QNetworkRequest(QUrl(url))
+        req.setRawHeader(b"Authorization", f"Bearer {token}".encode())
+
+        manager = QNetworkAccessManager()
+        loop = QEventLoop()
+        manager.finished.connect(loop.quit)
+
+        reply = manager.get(req)
+        loop.exec_()  # Blocks until the request is finished
+
+        province_name = ""
+        province_id = 0
+        if reply.error() == QNetworkReply.NoError:
+            response_data = reply.readAll().data()
+            try:
+                response_json = json.loads(response_data.decode("utf-8"))
+                if (
+                    response_json.get("status")
+                    or response_json.get("status_code") == 200
+                ):
+                    data = response_json.get("data", {})
+                    province_name = data.get("provinsi_name", "")
+                    province_id = data.get("provinsi_id", 0)
+                else:
+                    msg = response_json.get("msg", "Unknown API error")
+                    QgsMessageLog.logMessage(
+                        f"API error fetching province: {msg}",
+                        "IDPMPlugin",
+                        Qgis.Warning,
+                    )
+            except json.JSONDecodeError as e:
+                QgsMessageLog.logMessage(
+                    f"Failed to parse province response: {e}",
+                    "IDPMPlugin",
+                    Qgis.Warning,
+                )
+        else:
+            QgsMessageLog.logMessage(
+                f"Network error fetching province: {reply.errorString()}",
+                "IDPMPlugin",
+                Qgis.Warning,
+            )
+
+        reply.deleteLater()
+        manager.deleteLater()
+        return province_name, province_id
+
     def run(self):
         """
         Executes the layer loading in a background thread.
         """
         try:
+            # --- START: FETCH PROVINCE FROM API ---
+            province_name, province_id = self._fetch_province()
+            # --- END: FETCH PROVINCE FROM API ---
+
             if self.layer_type == "existing":
                 table_name = get_existing_table_name(self.year)
                 layer_name = f"Existing {self.year} - {self.wilker_name}"
@@ -189,15 +264,10 @@ class LayerLoaderTask(QgsTask):
                 # --- START: BPDAS AUTO-FILL IMPLEMENTATION ---
                 bpdas_index = self.layer.fields().indexOf("bpdas")
                 if bpdas_index != -1:
-                    # 1. Set the default value to the wilker name. Note the single quotes.
                     default_value_definition = QgsDefaultValue(f"'{self.wilker_name}'")
-
-                    # 2. Apply the default value definition to the field.
                     self.layer.setDefaultValueDefinition(
                         bpdas_index, default_value_definition
                     )
-
-                    # 3. Make the field non-editable in the form.
                     widget_setup = QgsEditorWidgetSetup(
                         "TextEdit", {"isEditable": False, "showClearButton": False}
                     )
@@ -205,13 +275,43 @@ class LayerLoaderTask(QgsTask):
                     form_config.setReadOnly(bpdas_index, True)
                 # --- END: BPDAS AUTO-FILL IMPLEMENTATION ---
 
+                # --- START: PROVINCE AUTO-FILL IMPLEMENTATION ---
+                prov_index = self.layer.fields().indexOf("prov")
+                if prov_index != -1 and province_name:
+                    default_value_definition = QgsDefaultValue(
+                        f"'{province_name.upper()}'"
+                    )
+                    self.layer.setDefaultValueDefinition(
+                        prov_index, default_value_definition
+                    )
+                    widget_setup = QgsEditorWidgetSetup(
+                        "TextEdit", {"isEditable": False, "showClearButton": False}
+                    )
+                    self.layer.setEditorWidgetSetup(prov_index, widget_setup)
+                    form_config.setReadOnly(prov_index, True)
+                # --- END: PROVINCE AUTO-FILL IMPLEMENTATION ---
+
+                # --- START: KODE_PROV AUTO-FILL IMPLEMENTATION ---
+                if self.layer_type == "existing":
+                    kode_prov_index = self.layer.fields().indexOf("kode_prov")
+                    if kode_prov_index != -1 and province_id:
+                        # QgsDefaultValue expects a string expression.
+                        # For numeric fields, just the number as a string is sufficient.
+                        default_value_definition = QgsDefaultValue(f"{province_id}")
+                        self.layer.setDefaultValueDefinition(
+                            kode_prov_index, default_value_definition
+                        )
+                        widget_setup = QgsEditorWidgetSetup(
+                            "TextEdit", {"isEditable": False, "showClearButton": False}
+                        )
+                        self.layer.setEditorWidgetSetup(kode_prov_index, widget_setup)
+                        form_config.setReadOnly(kode_prov_index, True)
+                # --- END: KODE_PROV AUTO-FILL IMPLEMENTATION ---
+
                 # --- START: Remark Field Configuration ---
                 remark_index = self.layer.fields().indexOf("remark")
                 if remark_index != -1:
-                    # 1. Set the default value to the wilker name. Note the single quotes.
                     default_value_definition = QgsDefaultValue(f"'TIDAK ADA CATATAN'")
-
-                    # 2. Apply the default value definition to the field.
                     self.layer.setDefaultValueDefinition(
                         remark_index, default_value_definition
                     )
@@ -224,10 +324,7 @@ class LayerLoaderTask(QgsTask):
                 # --- START: INTS FIELD CONFIGURATION ---
                 ints_index = self.layer.fields().indexOf("ints")
                 if ints_index != -1:
-                    # 1. Set the default value to the wilker name. Note the single quotes.
                     default_value_definition = QgsDefaultValue(f"'KLHK'")
-
-                    # 2. Apply the default value definition to the field.
                     self.layer.setDefaultValueDefinition(
                         ints_index, default_value_definition
                     )
