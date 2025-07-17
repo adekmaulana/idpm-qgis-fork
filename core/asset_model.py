@@ -23,7 +23,9 @@ class RasterAsset:
     nir_url: Optional[str] = field(init=False)
     red_url: Optional[str] = field(init=False)
     green_url: Optional[str] = field(init=False)
-    blue_url: Optional[str] = field(init=False)  # NEW: Add blue_url field
+    blue_url: Optional[str] = field(init=False)
+    swir_b11_url: Optional[str] = field(init=False)
+    swir_b12_url: Optional[str] = field(init=False)
     properties: Dict[str, Any] = field(init=False)
     geometry: Optional[Dict[str, Any]] = field(init=False)
 
@@ -49,9 +51,9 @@ class RasterAsset:
         self.nir_url = self.properties.get("asset_nir")
         self.red_url = self.properties.get("asset_red")
         self.green_url = self.properties.get("asset_green")
-        self.blue_url = self.properties.get(
-            "asset_blue"
-        )  # NEW: Get blue asset from properties
+        self.blue_url = self.properties.get("asset_blue")
+        self.swir_b11_url = self.properties.get("asset_swir_b11")
+        self.swir_b12_url = self.properties.get("asset_swir_b12")
 
         # Parse the capture date safely
         date_str = self.properties.get("tanggal", "")
@@ -102,7 +104,7 @@ class RasterAsset:
         Constructs the expected local file path for a given asset type.
 
         Args:
-            asset_type: The type of asset ('visual', 'nir', 'red', 'green', 'blue', 'ndvi', or 'false_color').
+            asset_type: The type of asset ('visual', 'nir', 'red', 'green', 'blue', 'swir_b11', 'swir_b12', 'ndvi', or 'false_color').
 
         Returns:
             The full local file path as a string.
@@ -118,8 +120,12 @@ class RasterAsset:
             file_name = os.path.basename(self.red_url.split("?")[0])
         elif asset_type == "green" and self.green_url:
             file_name = os.path.basename(self.green_url.split("?")[0])
-        elif asset_type == "blue" and self.blue_url:  # NEW: Handle 'blue' asset type
+        elif asset_type == "blue" and self.blue_url:
             file_name = os.path.basename(self.blue_url.split("?")[0])
+        elif asset_type == "swir_b11" and self.swir_b11_url:
+            file_name = os.path.basename(self.swir_b11_url.split("?")[0])
+        elif asset_type == "swir_b12" and self.swir_b12_url:
+            file_name = os.path.basename(self.swir_b12_url.split("?")[0])
         elif asset_type == "ndvi":
             file_name = f"{self.stac_id}_NDVI.tif"
         elif asset_type == "false_color":

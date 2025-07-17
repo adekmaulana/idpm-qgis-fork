@@ -237,10 +237,14 @@ class RasterItemWidget(QWidget):
         self.progress_bar_red = self._create_progress_bar()
         self.progress_bar_green = self._create_progress_bar()
         self.progress_bar_blue = self._create_progress_bar()
+        self.progress_bar_swir_b11 = self._create_progress_bar()
+        self.progress_bar_swir_b12 = self._create_progress_bar()
         bands_progress_layout.addWidget(self.progress_bar_nir)
         bands_progress_layout.addWidget(self.progress_bar_red)
         bands_progress_layout.addWidget(self.progress_bar_green)
         bands_progress_layout.addWidget(self.progress_bar_blue)
+        bands_progress_layout.addWidget(self.progress_bar_swir_b11)
+        bands_progress_layout.addWidget(self.progress_bar_swir_b12)
         layout.addWidget(self.bands_progress_container)
 
         self.status_label = QLabel("")
@@ -261,6 +265,10 @@ class RasterItemWidget(QWidget):
             available_bands.append("green")
         if self.asset.blue_url:
             available_bands.append("blue")
+        if self.asset.swir_b11_url:
+            available_bands.append("swir_b11")
+        if self.asset.swir_b12_url:
+            available_bands.append("swir_b12")
 
         dialog = RasterCalculatorDialog(available_bands, self)
         if dialog.exec_() == QDialog.Accepted:
@@ -338,6 +346,10 @@ class RasterItemWidget(QWidget):
                 pbar = self.progress_bar_green
             elif band == "blue":
                 pbar = self.progress_bar_blue
+            elif band == "swir_b11":
+                pbar = self.progress_bar_swir_b11
+            elif band == "swir_b12":
+                pbar = self.progress_bar_swir_b12
 
             if pbar:
                 pbar.setVisible(True)
@@ -373,6 +385,8 @@ class RasterItemWidget(QWidget):
         self.progress_bar_red.setVisible(False)
         self.progress_bar_green.setVisible(False)
         self.progress_bar_blue.setVisible(False)
+        self.progress_bar_swir_b11.setVisible(False)
+        self.progress_bar_swir_b12.setVisible(False)
         self.status_label.setVisible(False)
         self.buttons_widget.setVisible(True)
         self.cancel_button.setVisible(False)
@@ -1050,7 +1064,7 @@ class ImageListDialog(BaseDialog):
         self, asset: RasterAsset, formula: str, output_name: str, coefficients: dict
     ):
         found_vars = set(re.findall(r"[a-zA-Z_][a-zA-Z0-9_]*", formula))
-        available_bands = {"nir", "red", "green", "blue"}
+        available_bands = {"nir", "red", "green", "blue", "swir_b11", "swir_b12"}
         required_bands = found_vars.intersection(available_bands)
         bands_to_download = {}
         for band in required_bands:
