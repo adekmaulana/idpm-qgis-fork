@@ -266,38 +266,36 @@ class LayerLoaderTask(QgsTask):
             widget_setup = QgsEditorWidgetSetup("ValueMap", {"map": konservasi_options})
             self.layer.setEditorWidgetSetup(konservasi_index, widget_setup)
 
-        # # Define a common UTM zone for Indonesia for accurate measurements
-        # # EPSG:32748 is WGS 84 / UTM zone 48S, suitable for much of Indonesia.
-        # # This can be adjusted if a different zone is more appropriate for all BPDAS areas.
-        # utm_zone_crs = "EPSG:32748"
-        # source_crs = self.layer.crs().authid()
+        # Define a common UTM zone for Indonesia for accurate measurements
+        # EPSG:32748 is WGS 84 / UTM zone 48S, suitable for much of Indonesia.
+        # This can be adjusted if a different zone is more appropriate for all BPDAS areas.
+        utm_zone_crs = "EPSG:32748"
+        source_crs = self.layer.crs().authid()
 
-        # # Configure shape_leng
-        # shape_leng_index = self.layer.fields().indexOf("shape_leng")
-        # if shape_leng_index != -1:
-        #     expression = (
-        #         f"perimeter(transform($geometry, '{source_crs}', '{utm_zone_crs}'))"
-        #     )
-        #     default_value = QgsDefaultValue(expression)
-        #     self.layer.setDefaultValueDefinition(shape_leng_index, default_value)
+        # Configure shape_leng
+        shape_leng_index = self.layer.fields().indexOf("shape_leng")
+        if shape_leng_index != -1:
+            expression = f"perimeter(transform($geometry, '{source_crs}', '{utm_zone_crs}')) / 1000"
+            default_value = QgsDefaultValue(expression)
+            self.layer.setDefaultValueDefinition(shape_leng_index, default_value)
 
-        # # Configure shape_area
-        # shape_area_index = self.layer.fields().indexOf("shape_area")
-        # if shape_area_index != -1:
-        #     expression = (
-        #         f"area(transform($geometry, '{source_crs}', '{utm_zone_crs}')) / 10000"
-        #     )
-        #     default_value = QgsDefaultValue(expression)
-        #     self.layer.setDefaultValueDefinition(shape_area_index, default_value)
+        # Configure shape_area
+        shape_area_index = self.layer.fields().indexOf("shape_area")
+        if shape_area_index != -1:
+            expression = (
+                f"area(transform($geometry, '{source_crs}', '{utm_zone_crs}')) / 10000"
+            )
+            default_value = QgsDefaultValue(expression)
+            self.layer.setDefaultValueDefinition(shape_area_index, default_value)
 
-        # # Configure lsmgr
-        # lsmgr_index = self.layer.fields().indexOf("lsmgr")
-        # if lsmgr_index != -1:
-        #     expression = (
-        #         f"area(transform($geometry, '{source_crs}', '{utm_zone_crs}')) / 10000"
-        #     )
-        #     default_value = QgsDefaultValue(expression)
-        #     self.layer.setDefaultValueDefinition(lsmgr_index, default_value)
+        # Configure lsmgr
+        lsmgr_index = self.layer.fields().indexOf("lsmgr")
+        if lsmgr_index != -1:
+            expression = (
+                f"area(transform($geometry, '{source_crs}', '{utm_zone_crs}')) / 10000"
+            )
+            default_value = QgsDefaultValue(expression)
+            self.layer.setDefaultValueDefinition(lsmgr_index, default_value)
 
     def setup_potensi_layer_form(self):
         objectid_index = self.layer.fields().indexOf("objectid")
