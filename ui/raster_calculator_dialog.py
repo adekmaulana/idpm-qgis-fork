@@ -48,6 +48,23 @@ class RasterCalculatorDialog(QDialog):
                 "G * ((nir - red) / (nir + C1 * red - C2 * blue + L))",
                 "G = 2.5\nL = 1.0\nC1 = 6.0\nC2 = 7.5",
             ),
+            "NBR (Burn Ratio)": ("(nir - swir_b12) / (nir + swir_b12)", ""),
+            "NDMI (Moisture Index)": ("(nir - swir_b11) / (nir + swir_b11)", ""),
+            "MNDWI (Modified Water Index)": (
+                "(green - swir_b11) / (green + swir_b11)",
+                "",
+            ),
+            "NDBI (Built-up Index)": ("(swir_b11 - nir) / (swir_b11 + nir)", ""),
+            "BSI (Bare Soil Index)": (
+                "((swir_b11 + red) - (nir + blue)) / ((swir_b11 + red) + (nir + blue))",
+                "",
+            ),
+            "GCI (Green Chlorophyll)": ("(nir / green) - 1", ""),
+            "VARI (Visible Atmospherically Resistant)": (
+                "(green - red) / (green + red - blue)",
+                "",
+            ),
+            "GRVI (Green-Red Vegetation)": ("(green - red) / (green + red)", ""),
         }
         self.history_settings_key = "IDPMPlugin/calculatorHistory"
         self.history = self._load_history()
