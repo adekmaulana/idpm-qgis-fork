@@ -450,6 +450,12 @@ class LayerLoaderTask(QgsTask):
             widget_setup = QgsEditorWidgetSetup("ValueMap", {"map": ktrgn_options})
             self.layer.setEditorWidgetSetup(ktrgn_index, widget_setup)
 
+        # Configure keterangan we hide the field in the form
+        keterangan_index = self.layer.fields().indexOf("keterangan")
+        if keterangan_index != -1:
+            widget_setup = QgsEditorWidgetSetup("Hidden", {})
+            self.layer.setEditorWidgetSetup(keterangan_index, widget_setup)
+
     def finished(self, result):
         """
         Called on the main thread when the task is finished.
