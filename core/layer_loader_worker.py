@@ -17,6 +17,8 @@ from .database import (
     create_db_uri,
     get_existing_table_name,
     get_potensi_table_name,
+    get_qc_table_name,
+    check_changes,
 )
 from ..core.util import get_or_create_plugin_layer_group
 
@@ -122,9 +124,11 @@ class LayerLoaderTask(QgsTask):
 
             if self.layer_type == "existing":
                 table_name = get_existing_table_name(self.year)
+                table_qc_name = get_qc_table_name("existing", self.year)
                 layer_name = f"Existing {self.year} - {self.wilker_name}"
             elif self.layer_type == "potensi":
                 table_name = get_potensi_table_name(self.year)
+                table_qc_name = get_qc_table_name("potensi", self.year)
                 layer_name = f"Potensi {self.year} - {self.wilker_name}"
             else:
                 self.exception = Exception(f"Unknown layer type: {self.layer_type}")
@@ -246,15 +250,6 @@ class LayerLoaderTask(QgsTask):
                 # --- Configure ogc_fid field ---
                 ogc_fid_index = self.layer.fields().indexOf("ogc_fid")
                 if ogc_fid_index != -1:
-                    expression = (
-                        'IF ("ogc_fid" is NULL, maximum("ogc_fid") + 1, "ogc_fid")'
-                    )
-                    default_value_definition = QgsDefaultValue()
-                    default_value_definition.setExpression(expression=expression)
-                    default_value_definition.setApplyOnUpdate(True)
-                    self.layer.setDefaultValueDefinition(
-                        ogc_fid_index, default_value_definition
-                    )
                     widget_setup = QgsEditorWidgetSetup(
                         "TextEdit", {"isEditable": False, "showClearButton": False}
                     )
@@ -340,6 +335,7 @@ class LayerLoaderTask(QgsTask):
                     self.setup_potensi_layer_form()
 
                 self.layer.setEditFormConfig(form_config)
+                check_changes(self.wilker_name, self.layer, self.layer_type, self.year)
                 return True
 
             self.exception = Exception(

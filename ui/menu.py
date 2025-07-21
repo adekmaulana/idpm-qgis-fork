@@ -460,7 +460,7 @@ class MenuWidget(BaseDialog):
         if self.loading_dialog:
             self.loading_dialog.close()
 
-        if layer and layer.isValid():
+        if layer is not None and layer.isValid():
             ThemedMessageBox.show_message(
                 self,
                 QMessageBox.Information,

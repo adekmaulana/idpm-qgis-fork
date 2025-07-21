@@ -3,6 +3,7 @@ from qgis.core import (
     QgsDataSourceUri,
     Qgis,
     QgsMessageLog,
+    QgsVectorLayer,
 )
 from ..config import Config
 
@@ -60,8 +61,50 @@ def get_potensi_table_name(year: int) -> str:
     return f"potensi_{year}"
 
 
-def get_existing_qc_table_name(year: int) -> str:
+def get_qc_table_name(type_data: str, year: int) -> str:
     """
     Returns the table name for the 'Existing QC' layer, e.g., 'existing_2024_qc'.
     """
-    return f"existing_{year}_qc"
+    return f"{type_data}_{year}_qc"
+
+
+def check_changes(wilker_name: str, layer: QgsVectorLayer, type_data: str, year: int):
+    """
+    Checks the '_qc' table for changes and highlights them on the provided Type Data layer.
+    """
+    if not layer.isValid() or layer is None:
+        return
+
+    qc_table_name = get_qc_table_name(type_data, year)
+
+    uri_logger = create_db_uri(wilker_name, qc_table_name, "geometry", "ogc_fid")
+    if not uri_logger:
+        return
+
+    layer_logger = QgsVectorLayer(
+        uri_logger.uri(False), f"QC Log - {wilker_name} {year}", "postgres"
+    )
+
+    if not layer_logger.isValid():
+        QgsMessageLog.logMessage(
+            f"Failed to load QC table '{qc_table_name}' for wilker '{wilker_name}'!",
+            "IDPMPlugin",
+            Qgis.Warning,
+        )
+        return
+
+    if layer_logger.featureCount() > 0:
+        feature_ids = [f["ogc_fid"] for f in layer_logger.getFeatures()]
+        expression = f'"ogc_fid" IN ({",".join(map(str, feature_ids))})'
+        layer.selectByExpression(expression, QgsVectorLayer.SetSelection)
+        QgsMessageLog.logMessage(
+            f"Highlighted {len(feature_ids)} QC changes on layer '{layer.name()}'.",
+            "IDPMPlugin",
+            Qgis.Info,
+        )
+    else:
+        QgsMessageLog.logMessage(
+            f"No changes found in '{qc_table_name}' for wilker '{wilker_name}'.",
+            "IDPMPlugin",
+            Qgis.Info,
+        )
