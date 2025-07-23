@@ -3,22 +3,22 @@ from qgis.core import Qgis, QgsMessageLog
 from dotenv import load_dotenv
 
 # --- Load Environment Variables ---
-# This will search for the .env file in the plugin's root directory
-# and load its values into the environment for os.getenv() to use.
+# This will search for the .env file in the Documents directory first,
+# then fallback to the plugin's root directory.
 try:
-    plugin_dir = os.path.dirname(os.path.abspath(__file__))
-    dotenv_path = os.path.join(plugin_dir, ".env")
-    if os.path.exists(dotenv_path):
-        load_dotenv(dotenv_path=dotenv_path)
+    # Check Documents directory first (preferred location)
+    primary_path = os.path.join(os.path.expanduser("~"), "Documents", "idpm.env")
+    if os.path.exists(primary_path):
+        load_dotenv(dotenv_path=primary_path)
     else:
-        # Check .env from Documents directory as a fallback
-        fallback_path = os.path.join(os.path.expanduser("~"), "Documents", "idpm.env")
+        # Fallback to plugin root directory
+        plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        fallback_path = os.path.join(plugin_dir, ".env")
         if os.path.exists(fallback_path):
             load_dotenv(dotenv_path=fallback_path)
         else:
-
             QgsMessageLog.logMessage(
-                f"Configuration file not found at {dotenv_path}. Please create a .env file.",
+                f"Configuration file not found at {primary_path} or {fallback_path}. Please create an .env file.",
                 "IDPMPlugin",
                 Qgis.Warning,
             )
@@ -33,7 +33,7 @@ except ImportError:
 class Config:
     """
     Configuration settings for the application.
-    Values are loaded from the .env file in the plugin's root directory.
+    Values are loaded from the .env file (Documents/idpm.env preferred, fallback to plugin/.env).
     """
 
     # --- File/Path Settings ---
