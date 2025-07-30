@@ -80,7 +80,9 @@ class IDPMPlugin:
             self.action.setIcon(QIcon(icon_path))
 
         # Set tooltip
-        self.action.setToolTip("IDPM - Integrated Data Platform Management")
+        self.action.setToolTip(
+            "IDPM - Integrated Data Platform Mangrove for Coastal Resilience"
+        )
 
         self.action.triggered.connect(self.run)
         self.iface.addToolBarIcon(self.action)
