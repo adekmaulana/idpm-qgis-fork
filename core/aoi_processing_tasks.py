@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from typing import Dict, Optional, List
 from qgis.core import (
     QgsTask,
@@ -10,8 +11,13 @@ from qgis.core import (
 from PyQt5.QtCore import pyqtSignal
 
 
+def _generate_timestamp() -> str:
+    """Generate timestamp string for unique file naming."""
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
 class AoiVisualProcessingTask(QgsTask):
-    """Background task for processing visual assets with AOI - downloads directly from URL."""
+    """Background task for processing visual assets with AOI - with timestamped files."""
 
     visualProcessed = pyqtSignal(str, str, str)  # output_path, asset_id, layer_name
     errorOccurred = pyqtSignal(str, str)  # error_msg, asset_id
@@ -32,10 +38,11 @@ class AoiVisualProcessingTask(QgsTask):
         self.aoi_rect = aoi_rect
         self.canvas_crs = canvas_crs
         self.cache_dir = cache_dir
+        self.timestamp = _generate_timestamp()
         self.exception = None
 
     def run(self):
-        """Execute AOI visual processing - download directly from URL."""
+        """Execute AOI visual processing - download with timestamped filename."""
         try:
             from ..core import CogAoiLoader
 
@@ -46,18 +53,20 @@ class AoiVisualProcessingTask(QgsTask):
             # Initialize COG loader
             cog_loader = CogAoiLoader()
 
-            # Create output path
+            # Create timestamped output path
+            base_name = os.path.basename(self.visual_url).replace(".tif", "")
             visual_cache_path = os.path.join(
-                self.cache_dir, f"cropped_{os.path.basename(self.visual_url)}"
+                self.cache_dir, f"{self.asset_id}_visual_aoi_{self.timestamp}.tif"
             )
 
             self.setProgress(20)
             if self.isCanceled():
                 return False
 
-            # Download directly from URL with AOI
             QgsMessageLog.logMessage(
-                "Downloading visual from URL for AOI", "AOIProcessing", Qgis.Info
+                f"Downloading visual from URL for AOI with timestamp {self.timestamp}",
+                "AOIProcessing",
+                Qgis.Info,
             )
 
             self.setProgress(40)
@@ -76,9 +85,7 @@ class AoiVisualProcessingTask(QgsTask):
                 return False
 
             if cropped_path and cropped_path != visual_cache_path:
-                # Rename to consistent cache name
-                if os.path.exists(visual_cache_path):
-                    os.remove(visual_cache_path)
+                # Rename to timestamped filename
                 os.rename(cropped_path, visual_cache_path)
                 cropped_path = visual_cache_path
 
@@ -96,11 +103,11 @@ class AoiVisualProcessingTask(QgsTask):
     def finished(self, result):
         """Called on main thread when task completes."""
         if result and not self.isCanceled():
-            # Emit success
+            # Emit success with timestamped path
             visual_cache_path = os.path.join(
-                self.cache_dir, f"cropped_{os.path.basename(self.visual_url)}"
+                self.cache_dir, f"{self.asset_id}_visual_aoi_{self.timestamp}.tif"
             )
-            layer_name = f"{self.asset_id}_Visual_AOI"
+            layer_name = f"{self.asset_id}_Visual_AOI_{self.timestamp}"
             self.visualProcessed.emit(visual_cache_path, self.asset_id, layer_name)
         else:
             # Emit error
@@ -113,7 +120,7 @@ class AoiVisualProcessingTask(QgsTask):
 
 
 class AoiNdviProcessingTask(QgsTask):
-    """Background task for processing NDVI with AOI - downloads bands directly from URLs."""
+    """Background task for processing NDVI with AOI - with timestamped files."""
 
     ndviProcessed = pyqtSignal(str, str, str)  # output_path, asset_id, layer_name
     errorOccurred = pyqtSignal(str, str)  # error_msg, asset_id
@@ -136,10 +143,11 @@ class AoiNdviProcessingTask(QgsTask):
         self.aoi_rect = aoi_rect
         self.canvas_crs = canvas_crs
         self.cache_dir = cache_dir
+        self.timestamp = _generate_timestamp()
         self.exception = None
 
     def run(self):
-        """Execute AOI NDVI processing - download bands directly from URLs."""
+        """Execute AOI NDVI processing - with timestamped band files."""
         try:
             from ..core import CogBandProcessor
 
@@ -147,19 +155,19 @@ class AoiNdviProcessingTask(QgsTask):
             if self.isCanceled():
                 return False
 
-            # Always download fresh - no cache checking
+            # Create timestamped NDVI output path
             ndvi_output_path = os.path.join(
-                self.cache_dir, f"{self.asset_id}_ndvi_aoi.tif"
+                self.cache_dir, f"{self.asset_id}_ndvi_aoi_{self.timestamp}.tif"
             )
 
             self.setProgress(20)
             if self.isCanceled():
                 return False
 
-            # Initialize band processor
-            band_processor = CogBandProcessor(self.cache_dir)
+            # Initialize band processor with timestamp
+            band_processor = TimestampedCogBandProcessor(self.cache_dir, self.timestamp)
 
-            # Prepare band URLs - download directly without checking local files
+            # Prepare band URLs
             band_urls = {"nir": self.nir_url, "red": self.red_url}
 
             self.setProgress(40)
@@ -167,18 +175,14 @@ class AoiNdviProcessingTask(QgsTask):
                 return False
 
             QgsMessageLog.logMessage(
-                "Downloading NIR and Red bands from URLs for NDVI AOI processing",
+                f"Downloading NIR and Red bands with timestamp {self.timestamp}",
                 "AOIProcessing",
                 Qgis.Info,
             )
 
-            # Process bands - download directly from URLs (no local files)
+            # Process bands with timestamp
             result_paths = band_processor.process_bands_with_aoi(
-                band_urls,
-                self.aoi_rect,
-                self.canvas_crs,
-                self.asset_id,
-                {},  # Empty local paths
+                band_urls, self.aoi_rect, self.canvas_crs, self.asset_id, {}
             )
 
             self.setProgress(70)
@@ -218,14 +222,13 @@ class AoiNdviProcessingTask(QgsTask):
     def finished(self, result):
         """Called on main thread when task completes."""
         if result and not self.isCanceled():
-            # Emit success
+            # Emit success with timestamped path
             ndvi_output_path = os.path.join(
-                self.cache_dir, f"{self.asset_id}_ndvi_aoi.tif"
+                self.cache_dir, f"{self.asset_id}_ndvi_aoi_{self.timestamp}.tif"
             )
-            layer_name = f"{self.asset_id}_NDVI_AOI"
+            layer_name = f"{self.asset_id}_NDVI_AOI_{self.timestamp}"
             self.ndviProcessed.emit(ndvi_output_path, self.asset_id, layer_name)
         else:
-            # Emit error
             error_msg = (
                 str(self.exception)
                 if self.exception
@@ -235,7 +238,7 @@ class AoiNdviProcessingTask(QgsTask):
 
 
 class AoiFalseColorProcessingTask(QgsTask):
-    """Background task for processing False Color with AOI - downloads bands directly from URLs."""
+    """Background task for processing False Color with AOI - with timestamped files."""
 
     falseColorProcessed = pyqtSignal(str, str, str)  # output_path, asset_id, layer_name
     errorOccurred = pyqtSignal(str, str)  # error_msg, asset_id
@@ -256,10 +259,11 @@ class AoiFalseColorProcessingTask(QgsTask):
         self.aoi_rect = aoi_rect
         self.canvas_crs = canvas_crs
         self.cache_dir = cache_dir
+        self.timestamp = _generate_timestamp()
         self.exception = None
 
     def run(self):
-        """Execute AOI False Color processing - download bands directly from URLs."""
+        """Execute AOI False Color processing - with timestamped band files."""
         try:
             from ..core import CogBandProcessor
 
@@ -267,35 +271,31 @@ class AoiFalseColorProcessingTask(QgsTask):
             if self.isCanceled():
                 return False
 
-            # Always download fresh - no cache checking
+            # Create timestamped False Color output path
             fc_output_path = os.path.join(
-                self.cache_dir, f"{self.asset_id}_falsecolor_aoi.tif"
+                self.cache_dir, f"{self.asset_id}_falsecolor_aoi_{self.timestamp}.tif"
             )
 
             self.setProgress(20)
             if self.isCanceled():
                 return False
 
-            # Initialize band processor
-            band_processor = CogBandProcessor(self.cache_dir)
+            # Initialize band processor with timestamp
+            band_processor = TimestampedCogBandProcessor(self.cache_dir, self.timestamp)
 
             self.setProgress(40)
             if self.isCanceled():
                 return False
 
             QgsMessageLog.logMessage(
-                "Downloading NIR, Red, and Green bands from URLs for False Color AOI processing",
+                f"Downloading NIR, Red, and Green bands with timestamp {self.timestamp}",
                 "AOIProcessing",
                 Qgis.Info,
             )
 
-            # Process bands - download directly from URLs (no local files)
+            # Process bands with timestamp
             result_paths = band_processor.process_bands_with_aoi(
-                self.band_urls,
-                self.aoi_rect,
-                self.canvas_crs,
-                self.asset_id,
-                {},  # Empty local paths
+                self.band_urls, self.aoi_rect, self.canvas_crs, self.asset_id, {}
             )
 
             self.setProgress(70)
@@ -344,14 +344,13 @@ class AoiFalseColorProcessingTask(QgsTask):
     def finished(self, result):
         """Called on main thread when task completes."""
         if result and not self.isCanceled():
-            # Emit success
+            # Emit success with timestamped path
             fc_output_path = os.path.join(
-                self.cache_dir, f"{self.asset_id}_falsecolor_aoi.tif"
+                self.cache_dir, f"{self.asset_id}_falsecolor_aoi_{self.timestamp}.tif"
             )
-            layer_name = f"{self.asset_id}_FalseColor_AOI"
+            layer_name = f"{self.asset_id}_FalseColor_AOI_{self.timestamp}"
             self.falseColorProcessed.emit(fc_output_path, self.asset_id, layer_name)
         else:
-            # Emit error
             error_msg = (
                 str(self.exception)
                 if self.exception
@@ -361,7 +360,7 @@ class AoiFalseColorProcessingTask(QgsTask):
 
 
 class AoiCustomCalculationTask(QgsTask):
-    """Background task for custom calculations with AOI - downloads bands directly from URLs."""
+    """Background task for custom calculations with AOI - with timestamped files."""
 
     calculationProcessed = pyqtSignal(
         str, str, str, str
@@ -390,10 +389,11 @@ class AoiCustomCalculationTask(QgsTask):
         self.aoi_rect = aoi_rect
         self.canvas_crs = canvas_crs
         self.cache_dir = cache_dir
+        self.timestamp = _generate_timestamp()
         self.exception = None
 
     def run(self):
-        """Execute AOI custom calculation processing - download bands directly from URLs."""
+        """Execute AOI custom calculation processing - with timestamped band files."""
         try:
             from ..core import CogBandProcessor
 
@@ -401,17 +401,18 @@ class AoiCustomCalculationTask(QgsTask):
             if self.isCanceled():
                 return False
 
-            # Always download fresh - no cache checking
+            # Create timestamped calculation output path
             output_path = os.path.join(
-                self.cache_dir, f"{self.asset_id}_{self.output_name}_aoi.tif"
+                self.cache_dir,
+                f"{self.asset_id}_{self.output_name}_aoi_{self.timestamp}.tif",
             )
 
             self.setProgress(20)
             if self.isCanceled():
                 return False
 
-            # Initialize band processor
-            band_processor = CogBandProcessor(self.cache_dir)
+            # Initialize band processor with timestamp
+            band_processor = TimestampedCogBandProcessor(self.cache_dir, self.timestamp)
 
             self.setProgress(40)
             if self.isCanceled():
@@ -419,18 +420,14 @@ class AoiCustomCalculationTask(QgsTask):
 
             band_names = list(self.band_urls.keys())
             QgsMessageLog.logMessage(
-                f"Downloading {', '.join(band_names)} bands from URLs for {self.output_name} AOI processing",
+                f"Downloading {', '.join(band_names)} bands with timestamp {self.timestamp}",
                 "AOIProcessing",
                 Qgis.Info,
             )
 
-            # Process bands - download directly from URLs (no local files)
+            # Process bands with timestamp
             result_paths = band_processor.process_bands_with_aoi(
-                self.band_urls,
-                self.aoi_rect,
-                self.canvas_crs,
-                self.asset_id,
-                {},  # Empty local paths
+                self.band_urls, self.aoi_rect, self.canvas_crs, self.asset_id, {}
             )
 
             self.setProgress(60)
@@ -448,7 +445,7 @@ class AoiCustomCalculationTask(QgsTask):
                 )
                 return False
 
-            # Calculate custom index using the modified method
+            # Calculate custom index
             QgsMessageLog.logMessage(
                 f"Calculating {self.output_name} from downloaded bands...",
                 "AOIProcessing",
@@ -477,19 +474,141 @@ class AoiCustomCalculationTask(QgsTask):
     def finished(self, result):
         """Called on main thread when task completes."""
         if result and not self.isCanceled():
-            # Emit success
+            # Emit success with timestamped path
             output_path = os.path.join(
-                self.cache_dir, f"{self.asset_id}_{self.output_name}_aoi.tif"
+                self.cache_dir,
+                f"{self.asset_id}_{self.output_name}_aoi_{self.timestamp}.tif",
             )
-            layer_name = f"{self.asset_id}_{self.output_name}_AOI"
+            layer_name = f"{self.asset_id}_{self.output_name}_AOI_{self.timestamp}"
             self.calculationProcessed.emit(
                 output_path, self.asset_id, layer_name, self.formula
             )
         else:
-            # Emit error
             error_msg = (
                 str(self.exception)
                 if self.exception
                 else f"{self.output_name} AOI processing was canceled"
             )
             self.errorOccurred.emit(error_msg, self.asset_id)
+
+
+class TimestampedCogBandProcessor:
+    """
+    CogBandProcessor that adds timestamps to all band files to prevent conflicts.
+    """
+
+    def __init__(self, cache_dir: str, timestamp: str):
+        self.cache_dir = cache_dir
+        self.timestamp = timestamp
+        os.makedirs(cache_dir, exist_ok=True)
+
+        # Import the original loader
+        from ..core import CogAoiLoader
+
+        self.cog_loader = CogAoiLoader()
+
+    def process_bands_with_aoi(
+        self,
+        band_urls: Dict[str, str],
+        aoi_rect: QgsRectangle,
+        aoi_crs: QgsCoordinateReferenceSystem,
+        stac_id: str,
+        local_band_paths: Optional[Dict[str, str]] = None,
+        target_resolution: Optional[float] = None,
+    ) -> Dict[str, str]:
+        """
+        Download and process multiple bands with timestamps to prevent file conflicts.
+        """
+        downloaded_bands = {}
+
+        QgsMessageLog.logMessage(
+            f"Starting timestamped AOI band processing ({self.timestamp}) - downloading from URLs",
+            "COGProcessor",
+            Qgis.Info,
+        )
+
+        for band_name, band_url in band_urls.items():
+            try:
+                # Create timestamped cache filename
+                cache_filename = f"{stac_id}_{band_name}_aoi_{self.timestamp}.tif"
+                cache_path = os.path.join(self.cache_dir, cache_filename)
+
+                QgsMessageLog.logMessage(
+                    f"Downloading {band_name} with timestamp {self.timestamp}",
+                    "COGProcessor",
+                    Qgis.Info,
+                )
+
+                # Always download from URL
+                result_path = self.cog_loader.load_cog_with_aoi(
+                    band_url, aoi_rect, aoi_crs, target_resolution, self.cache_dir
+                )
+
+                if result_path:
+                    # Rename to timestamped filename
+                    if result_path != cache_path:
+                        os.rename(result_path, cache_path)
+
+                    downloaded_bands[band_name] = cache_path
+
+                    # Log success with file size
+                    file_size_mb = os.path.getsize(cache_path) / (1024 * 1024)
+                    QgsMessageLog.logMessage(
+                        f"Downloaded {band_name} with timestamp ({file_size_mb:.2f} MB)",
+                        "COGProcessor",
+                        Qgis.Info,
+                    )
+                else:
+                    QgsMessageLog.logMessage(
+                        f"Failed to download {band_name} for AOI",
+                        "COGProcessor",
+                        Qgis.Warning,
+                    )
+
+            except Exception as e:
+                QgsMessageLog.logMessage(
+                    f"Error downloading band {band_name}: {str(e)}",
+                    "COGProcessor",
+                    Qgis.Critical,
+                )
+
+        return downloaded_bands
+
+    def calculate_ndvi_from_aoi_bands(
+        self, nir_path: str, red_path: str, output_path: str
+    ) -> bool:
+        """Calculate NDVI from timestamped band files."""
+        # Import the original processor methods
+        from ..core import CogBandProcessor
+
+        # Create temporary processor to use existing calculation methods
+        temp_processor = CogBandProcessor(self.cache_dir)
+        return temp_processor.calculate_ndvi_from_aoi_bands(
+            nir_path, red_path, output_path
+        )
+
+    def calculate_false_color_composite(
+        self, nir_path: str, red_path: str, green_path: str, output_path: str
+    ) -> bool:
+        """Create False Color composite from timestamped band files."""
+        from ..core import CogBandProcessor
+
+        temp_processor = CogBandProcessor(self.cache_dir)
+        return temp_processor.calculate_false_color_composite(
+            nir_path, red_path, green_path, output_path
+        )
+
+    def calculate_custom_index(
+        self,
+        band_paths: Dict[str, str],
+        formula: str,
+        output_path: str,
+        coefficients: Optional[Dict] = None,
+    ) -> bool:
+        """Calculate custom index from timestamped band files."""
+        from ..core import CogBandProcessor
+
+        temp_processor = CogBandProcessor(self.cache_dir)
+        return temp_processor.calculate_custom_index(
+            band_paths, formula, output_path, coefficients
+        )

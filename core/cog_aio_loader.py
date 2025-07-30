@@ -326,26 +326,33 @@ class CogBandProcessor:
         aoi_rect: QgsRectangle,
         aoi_crs: QgsCoordinateReferenceSystem,
         stac_id: str,
-        local_band_paths: Optional[Dict[str, str]] = None,
+        local_band_paths: Optional[
+            Dict[str, str]
+        ] = None,  # IGNORED - kept for compatibility
         target_resolution: Optional[float] = None,
     ) -> Dict[str, str]:
         """
         Download and process multiple bands for a given AOI using rasterio.
-        Prioritizes local files over downloads when available.
+        ALWAYS downloads from URLs - ignores local files completely.
 
         Args:
             band_urls: Dictionary mapping band names to URLs
             aoi_rect: Area of Interest rectangle
             aoi_crs: CRS of the AOI
             stac_id: Identifier for the asset
-            local_band_paths: Dictionary mapping band names to local file paths (if available)
+            local_band_paths: IGNORED - kept for backward compatibility only
             target_resolution: Target resolution for resampling
 
         Returns:
             Dictionary mapping band names to local file paths
         """
         downloaded_bands = {}
-        local_paths = local_band_paths or {}
+
+        QgsMessageLog.logMessage(
+            f"Starting AOI band processing for STAC ID: {stac_id}",
+            "COGProcessor",
+            Qgis.Info,
+        )
 
         for band_name, band_url in band_urls.items():
             try:
@@ -353,86 +360,60 @@ class CogBandProcessor:
                 cache_filename = f"{stac_id}_{band_name}_aoi.tif"
                 cache_path = os.path.join(self.cache_dir, cache_filename)
 
-                # Skip if already exists and is valid
-                if os.path.exists(cache_path) and self._is_valid_raster(cache_path):
-                    downloaded_bands[band_name] = cache_path
-                    QgsMessageLog.logMessage(
-                        f"Using existing AOI cache for {band_name}",
-                        "COGProcessor",
-                        Qgis.Info,
-                    )
-                    continue
-
-                # Check if we have a local file to crop from
-                local_file_path = local_paths.get(band_name)
-                if (
-                    local_file_path
-                    and os.path.exists(local_file_path)
-                    and os.path.getsize(local_file_path) > 0
-                ):
-                    # Crop from local file instead of downloading
-                    QgsMessageLog.logMessage(
-                        f"Cropping {band_name} from local file: {os.path.basename(local_file_path)}",
-                        "COGProcessor",
-                        Qgis.Info,
-                    )
-
-                    success = self.cog_loader.crop_local_file_to_aoi(
-                        local_file_path, aoi_rect, aoi_crs, cache_path
-                    )
-
-                    if success:
-                        downloaded_bands[band_name] = cache_path
-                        QgsMessageLog.logMessage(
-                            f"Successfully cropped {band_name} from local file",
-                            "COGProcessor",
-                            Qgis.Info,
-                        )
-                        continue
-                    else:
-                        QgsMessageLog.logMessage(
-                            f"Failed to crop {band_name} from local file, will download from URL",
-                            "COGProcessor",
-                            Qgis.Warning,
-                        )
-
-                # Download band with AOI from URL (fallback or if no local file)
                 QgsMessageLog.logMessage(
-                    f"Downloading {band_name} from URL for AOI",
+                    f"Downloading {band_name} from URL for AOI: {band_url}",
                     "COGProcessor",
                     Qgis.Info,
                 )
 
+                # ALWAYS download from URL - no cache checking, no local file usage
                 result_path = self.cog_loader.load_cog_with_aoi(
                     band_url, aoi_rect, aoi_crs, target_resolution, self.cache_dir
                 )
 
                 if result_path:
-                    # Rename to consistent filename
+                    # Rename to consistent filename if needed
                     if result_path != cache_path:
+                        # Remove existing cache if it exists
                         if os.path.exists(cache_path):
                             os.remove(cache_path)
+                            QgsMessageLog.logMessage(
+                                f"Removed existing cache for {band_name}",
+                                "COGProcessor",
+                                Qgis.Info,
+                            )
+
+                        # Rename new download to cache path
                         os.rename(result_path, cache_path)
 
                     downloaded_bands[band_name] = cache_path
+
+                    # Log success with file size
+                    file_size_mb = os.path.getsize(cache_path) / (1024 * 1024)
                     QgsMessageLog.logMessage(
-                        f"Successfully downloaded {band_name} for AOI",
+                        f"Successfully downloaded {band_name} for AOI ({file_size_mb:.2f} MB)",
                         "COGProcessor",
                         Qgis.Info,
                     )
                 else:
                     QgsMessageLog.logMessage(
-                        f"Failed to download {band_name} for AOI",
+                        f"Failed to download {band_name} for AOI from URL",
                         "COGProcessor",
                         Qgis.Warning,
                     )
 
             except Exception as e:
                 QgsMessageLog.logMessage(
-                    f"Error processing band {band_name}: {str(e)}",
+                    f"Error downloading band {band_name} from URL: {str(e)}",
                     "COGProcessor",
                     Qgis.Critical,
                 )
+
+        QgsMessageLog.logMessage(
+            f"AOI band processing completed. Downloaded {len(downloaded_bands)}/{len(band_urls)} bands",
+            "COGProcessor",
+            Qgis.Info,
+        )
 
         return downloaded_bands
 

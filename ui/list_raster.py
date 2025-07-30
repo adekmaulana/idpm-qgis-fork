@@ -56,9 +56,219 @@ from ..core import (
     CogBandProcessor,
     QgisPluginIntegration,
     check_rasterio_installation,
+    AoiVisualProcessingTask,
+    AoiNdviProcessingTask,
+    AoiFalseColorProcessingTask,
+    AoiCustomCalculationTask,
 )
 from ..core.util import add_basemap_global_osm
 from .themed_message_box import ThemedMessageBox
+
+
+class AoiCacheManager:
+    """Manages timestamped AOI cache files to prevent disk space issues."""
+
+    def __init__(self, cache_base_dir: str):
+        self.cache_base_dir = cache_base_dir
+
+    def cleanup_old_aoi_files(
+        self, max_age_hours: int = 24, max_files_per_asset: int = 5
+    ):
+        """
+        Clean up old timestamped AOI files to manage disk space.
+
+        Args:
+            max_age_hours: Remove files older than this many hours
+            max_files_per_asset: Keep only the newest N files per asset
+        """
+        try:
+            QgsMessageLog.logMessage(
+                f"Starting AOI cache cleanup (age: {max_age_hours}h, max per asset: {max_files_per_asset})",
+                "AOICacheManager",
+                Qgis.Info,
+            )
+
+            current_time = time.time()
+            max_age_seconds = max_age_hours * 3600
+
+            # Statistics
+            files_removed = 0
+            space_freed_mb = 0
+
+            # Walk through all cache directories
+            for root, dirs, files in os.walk(self.cache_base_dir):
+                # Group timestamped files by asset and type
+                file_groups = self._group_timestamped_files(root, files)
+
+                for group_key, file_list in file_groups.items():
+                    asset_id, file_type = group_key
+
+                    # Sort by timestamp (newest first)
+                    file_list.sort(key=lambda x: x["timestamp"], reverse=True)
+
+                    # Remove files older than max_age
+                    for file_info in file_list:
+                        file_path = file_info["path"]
+                        file_age = current_time - os.path.getmtime(file_path)
+
+                        should_remove = False
+                        reason = ""
+
+                        if file_age > max_age_seconds:
+                            should_remove = True
+                            reason = f"age ({file_age/3600:.1f}h)"
+                        elif (
+                            len([f for f in file_list if not f.get("to_remove", False)])
+                            > max_files_per_asset
+                        ):
+                            should_remove = True
+                            reason = f"excess (keeping newest {max_files_per_asset})"
+
+                        if should_remove:
+                            try:
+                                file_size = os.path.getsize(file_path)
+                                os.remove(file_path)
+                                files_removed += 1
+                                space_freed_mb += file_size / (1024 * 1024)
+
+                                QgsMessageLog.logMessage(
+                                    f"Removed {os.path.basename(file_path)} ({reason})",
+                                    "AOICacheManager",
+                                    Qgis.Info,
+                                )
+
+                                file_info["to_remove"] = True
+
+                            except Exception as e:
+                                QgsMessageLog.logMessage(
+                                    f"Error removing {file_path}: {str(e)}",
+                                    "AOICacheManager",
+                                    Qgis.Warning,
+                                )
+
+            # Remove empty directories
+            self._remove_empty_directories()
+
+            QgsMessageLog.logMessage(
+                f"AOI cache cleanup completed: {files_removed} files removed, {space_freed_mb:.1f} MB freed",
+                "AOICacheManager",
+                Qgis.Info,
+            )
+
+            return {"files_removed": files_removed, "space_freed_mb": space_freed_mb}
+
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                f"Error during AOI cache cleanup: {str(e)}",
+                "AOICacheManager",
+                Qgis.Critical,
+            )
+            return {"files_removed": 0, "space_freed_mb": 0}
+
+    def _group_timestamped_files(self, directory: str, files: list) -> dict:
+        """Group timestamped AOI files by asset ID and type."""
+        file_groups = {}
+
+        for filename in files:
+            if not filename.endswith(".tif"):
+                continue
+
+            # Parse timestamped filename: ASSET_TYPE_aoi_TIMESTAMP.tif
+            if "_aoi_" in filename and filename.count("_") >= 3:
+                parts = filename.replace(".tif", "").split("_")
+
+                # Find the aoi part
+                try:
+                    aoi_index = parts.index("aoi")
+                    if aoi_index + 1 < len(parts):
+                        # Extract asset_id, file_type, and timestamp
+                        asset_parts = parts[: aoi_index - 1]  # Everything before type
+                        file_type = parts[aoi_index - 1]  # Type (ndvi, visual, etc.)
+                        timestamp = parts[aoi_index + 1]  # Timestamp after 'aoi'
+
+                        asset_id = "_".join(asset_parts)
+                        group_key = (asset_id, file_type)
+
+                        if group_key not in file_groups:
+                            file_groups[group_key] = []
+
+                        file_groups[group_key].append(
+                            {
+                                "path": os.path.join(directory, filename),
+                                "timestamp": timestamp,
+                                "asset_id": asset_id,
+                                "file_type": file_type,
+                            }
+                        )
+
+                except (ValueError, IndexError):
+                    # Not a properly formatted timestamped file
+                    continue
+
+        return file_groups
+
+    def _remove_empty_directories(self):
+        """Remove empty cache directories."""
+        for root, dirs, files in os.walk(self.cache_base_dir, topdown=False):
+            for dir_name in dirs:
+                dir_path = os.path.join(root, dir_name)
+                try:
+                    if not os.listdir(dir_path):  # Directory is empty
+                        os.rmdir(dir_path)
+                        QgsMessageLog.logMessage(
+                            f"Removed empty directory: {dir_name}",
+                            "AOICacheManager",
+                            Qgis.Info,
+                        )
+                except:
+                    pass
+
+    def get_cache_statistics(self) -> dict:
+        """Get statistics about AOI cache usage."""
+        try:
+            total_size = 0
+            file_count = 0
+            asset_count = 0
+            assets = set()
+
+            for root, dirs, files in os.walk(self.cache_base_dir):
+                for filename in files:
+                    if filename.endswith(".tif") and "_aoi_" in filename:
+                        file_path = os.path.join(root, filename)
+                        try:
+                            total_size += os.path.getsize(file_path)
+                            file_count += 1
+
+                            # Extract asset ID for counting
+                            parts = filename.split("_")
+                            if len(parts) >= 3:
+                                asset_id = parts[0]  # First part is usually asset ID
+                                assets.add(asset_id)
+
+                        except:
+                            pass
+
+            return {
+                "total_size_mb": total_size / (1024 * 1024),
+                "file_count": file_count,
+                "asset_count": len(assets),
+                "avg_size_per_file_mb": (
+                    (total_size / file_count / (1024 * 1024)) if file_count > 0 else 0
+                ),
+            }
+
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                f"Error getting cache statistics: {str(e)}",
+                "AOICacheManager",
+                Qgis.Warning,
+            )
+            return {
+                "total_size_mb": 0,
+                "file_count": 0,
+                "asset_count": 0,
+                "avg_size_per_file_mb": 0,
+            }
 
 
 class RoundedImageLabel(QLabel):
@@ -319,10 +529,10 @@ class RasterItemWidget(QWidget):
         if self.btn_ndvi.text() == "Open NDVI":
             self.openNdviRequested.emit(self.asset)
         else:
-            style_dialog = NdviStyleDialog(self)
-            if style_dialog.exec_() == QDialog.Accepted:
-                classification_items = style_dialog.get_classification_items()
-                self.processNdviRequested.emit(self.asset, classification_items)
+            # style_dialog = NdviStyleDialog(self)
+            # if style_dialog.exec_() == QDialog.Accepted:
+            #     classification_items = style_dialog.get_classification_items()
+            self.processNdviRequested.emit(self.asset, list())
 
     def _on_false_color_button_clicked(self):
         if self.btn_false_color.text() == "Open False Color":
@@ -768,6 +978,142 @@ class ImageListDialog(BaseDialog):
             self.current_page += 1
             self.update_list_and_pagination()
 
+    def _on_aoi_visual_processed(
+        self, output_path: str, asset_id: str, layer_name: str
+    ):
+        """Handle completion of visual AOI processing."""
+        try:
+            # Clean up operation tracking
+            op_key = f"{asset_id}_visual_aoi"
+            if op_key in self.active_operations:
+                if progress := self.active_operations[op_key].get("progress"):
+                    progress.close()
+                del self.active_operations[op_key]
+
+            # Find asset
+            asset = next((a for a in self.all_assets if a.stac_id == asset_id), None)
+            if not asset:
+                return
+
+            # Load the layer
+            self._load_visual_layer(asset, output_path)
+
+            # Update UI
+            if item_widget := self._get_item_widget(asset_id):
+                item_widget.update_ui_based_on_local_files()
+
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                f"Error handling visual AOI completion: {str(e)}",
+                "IDPMPlugin",
+                Qgis.Critical,
+            )
+
+    def _on_aoi_ndvi_processed(self, output_path: str, asset_id: str, layer_name: str):
+        """Handle completion of NDVI AOI processing."""
+        try:
+            # Clean up operation tracking
+            op_key = f"{asset_id}_ndvi_aoi"
+            if op_key in self.active_operations:
+                if progress := self.active_operations[op_key].get("progress"):
+                    progress.close()
+                del self.active_operations[op_key]
+
+            # Find asset
+            asset = next((a for a in self.all_assets if a.stac_id == asset_id), None)
+            if not asset:
+                return
+
+            # Load the layer
+            self._load_ndvi_layer(asset, output_path)
+
+            # Update UI
+            if item_widget := self._get_item_widget(asset_id):
+                item_widget.update_ui_based_on_local_files()
+
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                f"Error handling NDVI AOI completion: {str(e)}",
+                "IDPMPlugin",
+                Qgis.Critical,
+            )
+
+    def _on_aoi_false_color_processed(
+        self, output_path: str, asset_id: str, layer_name: str
+    ):
+        """Handle completion of False Color AOI processing."""
+        try:
+            # Clean up operation tracking
+            op_key = f"{asset_id}_falsecolor_aoi"
+            if op_key in self.active_operations:
+                if progress := self.active_operations[op_key].get("progress"):
+                    progress.close()
+                del self.active_operations[op_key]
+
+            # Find asset
+            asset = next((a for a in self.all_assets if a.stac_id == asset_id), None)
+            if not asset:
+                return
+
+            # Load the layer
+            self._load_false_color_layer(asset, output_path)
+
+            # Update UI
+            if item_widget := self._get_item_widget(asset_id):
+                item_widget.update_ui_based_on_local_files()
+
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                f"Error handling False Color AOI completion: {str(e)}",
+                "IDPMPlugin",
+                Qgis.Critical,
+            )
+
+    def _on_aoi_custom_calculation_processed(
+        self, output_path: str, asset_id: str, layer_name: str, formula: str
+    ):
+        """Handle completion of custom calculation AOI processing."""
+        try:
+            # Clean up operation tracking
+            op_keys = [
+                key
+                for key in self.active_operations.keys()
+                if key.startswith(f"{asset_id}_") and key.endswith("_aoi")
+            ]
+            for op_key in op_keys:
+                if op_key in self.active_operations:
+                    if progress := self.active_operations[op_key].get("progress"):
+                        progress.close()
+                    output_name = self.active_operations[op_key].get(
+                        "output_name", "Custom"
+                    )
+                    del self.active_operations[op_key]
+                    break
+
+            # Find asset
+            asset = next((a for a in self.all_assets if a.stac_id == asset_id), None)
+            if not asset:
+                return
+
+            # Extract output name from layer name
+            output_name = layer_name.replace(f"{asset_id}_", "").replace("_AOI", "")
+
+            # Load the layer
+            self._load_custom_calculation_layer(
+                asset, output_path, output_name, formula
+            )
+
+            # Update UI
+            if item_widget := self._get_item_widget(asset_id):
+                item_widget.update_ui_based_on_local_files()
+
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                f"Error handling custom calculation AOI completion: {str(e)}",
+                "IDPMPlugin",
+                Qgis.Critical,
+            )
+
     def _on_aoi_processing_error(self, error_msg: str, asset_id: str):
         """Handle AOI processing errors."""
         try:
@@ -1015,99 +1361,52 @@ class ImageListDialog(BaseDialog):
             self._download_visual_original(asset)
 
     def _download_visual_with_aoi(self, asset):
-        """Download or crop visual asset to AOI with improved progress handling."""
-        try:
-            canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-            cache_dir = self._get_cache_directory(asset.stac_id)
+        """
+        Download visual asset to AOI using background processing.
 
-            # Check if we have local visual file to crop from
-            visual_cache_path = os.path.join(
-                cache_dir, f"cropped_{os.path.basename(asset.visual_url)}"
+        Always downloads fresh from URL - no cache checking.
+        """
+        try:
+            cache_dir = self._get_cache_directory(asset.stac_id)
+            canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+
+            # Create background task - always download fresh
+            task = AoiVisualProcessingTask(
+                asset.stac_id, asset.visual_url, self.aoi, canvas_crs, cache_dir
             )
 
-            # Skip if AOI cache already exists
-            if (
-                os.path.exists(visual_cache_path)
-                and os.path.getsize(visual_cache_path) > 0
-            ):
-                QgsMessageLog.logMessage(
-                    f"Using existing AOI visual cache: {os.path.basename(visual_cache_path)}",
-                    "IDPMPlugin",
-                    Qgis.Info,
-                )
-                self._load_visual_layer(asset, visual_cache_path)
-                return
+            # Show progress dialog
+            progress = QProgressDialog(
+                f"Processing Visual AOI for {asset.stac_id}...", "Cancel", 0, 100, self
+            )
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(500)  # Show after 500ms
 
-            # Check for local visual file first
-            local_visual_path = None
-            if hasattr(asset, "get_local_path"):
-                try:
-                    local_visual_path = asset.get_local_path("visual")
-                except:
-                    pass
+            # Connect signals
+            task.progressChanged.connect(lambda value: progress.setValue(int(value)))
+            task.visualProcessed.connect(self._on_aoi_visual_processed)
+            task.errorOccurred.connect(self._on_aoi_processing_error)
+            progress.canceled.connect(task.cancel)
 
-            cropped_path = None
+            # Track active operation
+            op_key = f"{asset.stac_id}_visual_aoi"
+            self.active_operations[op_key] = {
+                "type": "visual_aoi",
+                "task": task,
+                "progress": progress,
+                "asset": asset,
+            }
 
-            if (
-                local_visual_path
-                and os.path.exists(local_visual_path)
-                and os.path.getsize(local_visual_path) > 0
-            ):
-                # Crop from local file - much faster!
-                QgsMessageLog.logMessage(
-                    f"Cropping visual from local file: {os.path.basename(local_visual_path)}",
-                    "IDPMPlugin",
-                    Qgis.Info,
-                )
+            # Update UI to show processing state
+            if item_widget := self._get_item_widget(asset.stac_id):
+                item_widget.update_ui_based_on_local_files()
 
-                success = self.cog_loader.crop_local_file_to_aoi(
-                    local_visual_path, self.aoi, canvas_crs, visual_cache_path
-                )
-
-                if success:
-                    cropped_path = visual_cache_path
-                    QgsMessageLog.logMessage(
-                        "Successfully cropped visual from local file",
-                        "IDPMPlugin",
-                        Qgis.Info,
-                    )
-                else:
-                    QgsMessageLog.logMessage(
-                        "Failed to crop from local file, will download",
-                        "IDPMPlugin",
-                        Qgis.Warning,
-                    )
-
-            if not cropped_path:
-                # Download from URL with progress
-                QgsMessageLog.logMessage(
-                    "Downloading visual from URL for AOI", "IDPMPlugin", Qgis.Info
-                )
-
-                cropped_path = self.cog_loader.load_cog_with_aoi(
-                    asset.visual_url, self.aoi, canvas_crs, cache_dir=cache_dir
-                )
-
-                if cropped_path and cropped_path != visual_cache_path:
-                    # Rename to consistent cache name
-                    if os.path.exists(visual_cache_path):
-                        os.remove(visual_cache_path)
-                    os.rename(cropped_path, visual_cache_path)
-                    cropped_path = visual_cache_path
-
-            if cropped_path:
-                self._load_visual_layer(asset, cropped_path)
-            else:
-                ThemedMessageBox.show_message(
-                    self,
-                    QMessageBox.Warning,
-                    "Download Failed",
-                    "Failed to load visual data for the specified AOI.",
-                )
+            # Add task to QGIS task manager
+            QgsApplication.taskManager().addTask(task)
 
         except Exception as e:
             QgsMessageLog.logMessage(
-                f"Error downloading visual with AOI: {str(e)}",
+                f"Error starting visual AOI processing: {str(e)}",
                 "IDPMPlugin",
                 Qgis.Critical,
             )
@@ -1201,26 +1500,15 @@ class ImageListDialog(BaseDialog):
         else:
             self._process_ndvi_original(asset, classification_items)
 
-    def _process_ndvi_with_aoi(self, asset, classification_items: list = None):
-        """Process NDVI using AOI-cropped bands with improved performance."""
+    def _process_ndvi_with_aoi(
+        self, asset, classification_items: Optional[List] = None
+    ):
+        """
+        Process NDVI using AOI-cropped bands with background processing.
+
+        Always downloads fresh from URLs - no cache checking.
+        """
         try:
-            canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-            cache_dir = self._get_cache_directory(asset.stac_id)
-
-            # Check if NDVI already exists in cache
-            ndvi_output_path = os.path.join(cache_dir, f"{asset.stac_id}_ndvi_aoi.tif")
-            if (
-                os.path.exists(ndvi_output_path)
-                and os.path.getsize(ndvi_output_path) > 0
-            ):
-                QgsMessageLog.logMessage(
-                    f"Using existing NDVI cache: {os.path.basename(ndvi_output_path)}",
-                    "IDPMPlugin",
-                    Qgis.Info,
-                )
-                self._load_ndvi_layer(asset, ndvi_output_path)
-                return
-
             # Validate AOI size
             aoi_area = self.aoi.width() * self.aoi.height()
             if aoi_area > 1.0:  # 1 square degree
@@ -1235,81 +1523,68 @@ class ImageListDialog(BaseDialog):
                 if reply != QMessageBox.Yes:
                     return
 
-            # Initialize band processor
-            band_processor = CogBandProcessor(cache_dir)
+            cache_dir = self._get_cache_directory(asset.stac_id)
+            canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
 
-            # Get band URLs and check for local files
-            band_urls = {"nir": asset.nir_url, "red": asset.red_url}
-
-            # Get local band paths if available
-            local_band_paths = self._get_local_band_paths(asset)
-
-            # Show processing status in message bar (non-blocking)
-            self.iface.messageBar().pushMessage(
-                "Processing",
-                f"Processing NDVI for AOI ({aoi_area:.4f}°²)...",
-                level=Qgis.Info,
-                duration=0,  # Duration 0 = until manually cleared
+            # Create background task - always download fresh
+            task = AoiNdviProcessingTask(
+                asset.stac_id,
+                asset.nir_url,
+                asset.red_url,
+                self.aoi,
+                canvas_crs,
+                cache_dir,
             )
 
-            QgsMessageLog.logMessage(
-                f"Starting NDVI processing for AOI. Local files available: {list(local_band_paths.keys())}",
-                "IDPMPlugin",
-                Qgis.Info,
+            # Show progress dialog
+            progress = QProgressDialog(
+                f"Processing NDVI AOI for {asset.stac_id}...", "Cancel", 0, 100, self
             )
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(500)
 
-            # Process bands (will use local files when available)
-            result_paths = band_processor.process_bands_with_aoi(
-                band_urls, self.aoi, canvas_crs, asset.stac_id, local_band_paths
-            )
+            # Connect signals
+            task.progressChanged.connect(lambda value: progress.setValue(int(value)))
+            task.ndviProcessed.connect(self._on_aoi_ndvi_processed)
+            task.errorOccurred.connect(self._on_aoi_processing_error)
+            progress.canceled.connect(task.cancel)
 
-            if "nir" in result_paths and "red" in result_paths:
-                # Calculate NDVI
-                QgsMessageLog.logMessage(
-                    "Calculating NDVI from processed bands...", "IDPMPlugin", Qgis.Info
-                )
+            # Track active operation
+            op_key = f"{asset.stac_id}_ndvi_aoi"
+            self.active_operations[op_key] = {
+                "type": "ndvi_aoi",
+                "task": task,
+                "progress": progress,
+                "asset": asset,
+            }
 
-                success = band_processor.calculate_ndvi_from_aoi_bands(
-                    result_paths["nir"], result_paths["red"], ndvi_output_path
-                )
+            # Update UI to show processing state
+            if item_widget := self._get_item_widget(asset.stac_id):
+                item_widget.update_ui_based_on_local_files()
 
-                # Clear processing message
-                self.iface.messageBar().clearWidgets()
-
-                if success:
-                    self._load_ndvi_layer(asset, ndvi_output_path)
-                else:
-                    self.iface.messageBar().pushMessage(
-                        "Error",
-                        "Failed to calculate NDVI from AOI bands",
-                        level=Qgis.Critical,
-                        duration=5,
-                    )
-            else:
-                self.iface.messageBar().clearWidgets()
-                self.iface.messageBar().pushMessage(
-                    "Error",
-                    "Failed to process required bands for AOI",
-                    level=Qgis.Critical,
-                    duration=5,
-                )
+            # Add task to QGIS task manager
+            QgsApplication.taskManager().addTask(task)
 
         except Exception as e:
-            self.iface.messageBar().clearWidgets()
             QgsMessageLog.logMessage(
-                f"Error processing NDVI with AOI: {str(e)}", "IDPMPlugin", Qgis.Critical
+                f"Error starting NDVI AOI processing: {str(e)}",
+                "IDPMPlugin",
+                Qgis.Critical,
             )
             # Fallback to original method
             self._process_ndvi_original(asset, classification_items)
 
     def _load_ndvi_layer(self, asset, ndvi_path: str):
-        """Load NDVI layer without any styling (natural grayscale)."""
+        """Load NDVI layer with proper NDVI color styling."""
         try:
             layer_name = f"{asset.stac_id}_NDVI_AOI"
             layer = QgsRasterLayer(ndvi_path, layer_name)
 
             if layer.isValid():
-                # Add to project without any styling
+                # Apply default NDVI styling before adding to project
+                self._apply_default_ndvi_styling(layer)
+
+                # Add to project
                 QgsProject.instance().addMapLayer(layer)
 
                 # Zoom to AOI
@@ -1322,13 +1597,13 @@ class ImageListDialog(BaseDialog):
                 # Success message in message bar (non-blocking)
                 self.iface.messageBar().pushMessage(
                     "Success",
-                    f"NDVI processed ({file_size_mb:.1f} MB, {aoi_area:.4f}°²) - {layer_name}",
+                    f"NDVI processed with styling ({file_size_mb:.1f} MB, {aoi_area:.4f}°²) - {layer_name}",
                     level=Qgis.Success,
                     duration=8,
                 )
 
                 QgsMessageLog.logMessage(
-                    f"NDVI layer loaded successfully: {layer_name} ({file_size_mb:.1f} MB)",
+                    f"NDVI layer loaded with styling: {layer_name} ({file_size_mb:.1f} MB)",
                     "IDPMPlugin",
                     Qgis.Info,
                 )
@@ -1346,48 +1621,57 @@ class ImageListDialog(BaseDialog):
             )
 
     def _apply_default_ndvi_styling(self, layer: QgsRasterLayer):
-        """Apply simple default NDVI styling without user dialog."""
+        """Apply proper NDVI color styling to the layer."""
         try:
-            # Create simple NDVI color ramp
+            from qgis.core import (
+                QgsRasterShader,
+                QgsColorRampShader,
+                QgsSingleBandPseudoColorRenderer,
+            )
+            from PyQt5.QtGui import QColor
+
+            # Create NDVI color ramp shader
             shader = QgsRasterShader()
             color_ramp = QgsColorRampShader()
             color_ramp.setColorRampType(QgsColorRampShader.Interpolated)
 
-            # Default NDVI color scheme
+            # NDVI color scheme: Red (low/negative) to Green (high/positive)
             ramp_items = [
                 QgsColorRampShader.ColorRampItem(
-                    -1.0, QColor(165, 0, 38), "-1.0"
+                    -1.0, QColor(165, 0, 38), "-1.0 (Water/Rock)"
                 ),  # Dark red
                 QgsColorRampShader.ColorRampItem(
-                    -0.2, QColor(215, 48, 39), "-0.2"
+                    -0.2, QColor(215, 48, 39), "-0.2 (Bare soil)"
                 ),  # Red
                 QgsColorRampShader.ColorRampItem(
-                    0.0, QColor(254, 224, 139), "0.0"
+                    0.0, QColor(254, 224, 139), "0.0 (No vegetation)"
                 ),  # Yellow
                 QgsColorRampShader.ColorRampItem(
-                    0.2, QColor(217, 239, 139), "0.2"
+                    0.2, QColor(217, 239, 139), "0.2 (Sparse veg)"
                 ),  # Light green
                 QgsColorRampShader.ColorRampItem(
-                    0.4, QColor(166, 217, 106), "0.4"
+                    0.4, QColor(166, 217, 106), "0.4 (Moderate veg)"
                 ),  # Green
                 QgsColorRampShader.ColorRampItem(
-                    0.6, QColor(102, 189, 99), "0.6"
+                    0.6, QColor(102, 189, 99), "0.6 (Dense veg)"
                 ),  # Dark green
                 QgsColorRampShader.ColorRampItem(
-                    1.0, QColor(26, 152, 80), "1.0"
+                    1.0, QColor(26, 152, 80), "1.0 (Very dense veg)"
                 ),  # Very dark green
             ]
 
             color_ramp.setColorRampItemList(ramp_items)
             shader.setRasterShaderFunction(color_ramp)
 
-            # Apply renderer
+            # Create and apply the renderer
             renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
             layer.setRenderer(renderer)
+
+            # Trigger repaint to apply styling
             layer.triggerRepaint()
 
             QgsMessageLog.logMessage(
-                "Applied default NDVI styling", "IDPMPlugin", Qgis.Info
+                "Applied default NDVI color styling", "IDPMPlugin", Qgis.Info
             )
 
         except Exception as e:
@@ -1395,7 +1679,9 @@ class ImageListDialog(BaseDialog):
                 f"Error applying NDVI styling: {str(e)}", "IDPMPlugin", Qgis.Warning
             )
 
-    def _process_ndvi_original(self, asset, classification_items: list):
+    def _process_ndvi_original(
+        self, asset, classification_items: Optional[List] = None
+    ):
         """Original NDVI processing method (fallback)."""
         # Your existing _handle_process_ndvi_requested logic here
         bands_to_download = {}
@@ -1453,93 +1739,56 @@ class ImageListDialog(BaseDialog):
             self._process_false_color_original(asset)
 
     def _process_false_color_with_aoi(self, asset, band_urls: Dict[str, str]):
-        """Process False Color composite using AOI-cropped bands with improved performance."""
+        """
+        Process False Color composite using AOI-cropped bands with background processing.
+
+        Always downloads fresh from URLs - no cache checking.
+        """
         try:
-            canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
             cache_dir = self._get_cache_directory(asset.stac_id)
+            canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
 
-            # Check if False Color already exists in cache
-            fc_output_path = os.path.join(
-                cache_dir, f"{asset.stac_id}_falsecolor_aoi.tif"
-            )
-            if os.path.exists(fc_output_path) and os.path.getsize(fc_output_path) > 0:
-                QgsMessageLog.logMessage(
-                    f"Using existing False Color cache: {os.path.basename(fc_output_path)}",
-                    "IDPMPlugin",
-                    Qgis.Info,
-                )
-                self._load_false_color_layer(asset, fc_output_path)
-                return
-
-            # Initialize band processor
-            band_processor = CogBandProcessor(cache_dir)
-
-            # Get local band paths if available
-            local_band_paths = self._get_local_band_paths(asset)
-
-            # Show processing status in message bar (non-blocking)
-            aoi_area = self.aoi.width() * self.aoi.height()
-            self.iface.messageBar().pushMessage(
-                "Processing",
-                f"Processing False Color for AOI ({aoi_area:.4f}°²)...",
-                level=Qgis.Info,
-                duration=0,  # Duration 0 = until manually cleared
+            # Create background task - always download fresh
+            task = AoiFalseColorProcessingTask(
+                asset.stac_id, band_urls, self.aoi, canvas_crs, cache_dir
             )
 
-            QgsMessageLog.logMessage(
-                f"Starting False Color processing for AOI. Local files available: {list(local_band_paths.keys())}",
-                "IDPMPlugin",
-                Qgis.Info,
+            # Show progress dialog
+            progress = QProgressDialog(
+                f"Processing False Color AOI for {asset.stac_id}...",
+                "Cancel",
+                0,
+                100,
+                self,
             )
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(500)
 
-            # Process bands (will use local files when available)
-            result_paths = band_processor.process_bands_with_aoi(
-                band_urls, self.aoi, canvas_crs, asset.stac_id, local_band_paths
-            )
+            # Connect signals
+            task.progressChanged.connect(lambda value: progress.setValue(int(value)))
+            task.falseColorProcessed.connect(self._on_aoi_false_color_processed)
+            task.errorOccurred.connect(self._on_aoi_processing_error)
+            progress.canceled.connect(task.cancel)
 
-            if all(band in result_paths for band in ["nir", "red", "green"]):
-                # Create False Color composite
-                QgsMessageLog.logMessage(
-                    "Creating False Color composite from processed bands...",
-                    "IDPMPlugin",
-                    Qgis.Info,
-                )
+            # Track active operation
+            op_key = f"{asset.stac_id}_falsecolor_aoi"
+            self.active_operations[op_key] = {
+                "type": "falsecolor_aoi",
+                "task": task,
+                "progress": progress,
+                "asset": asset,
+            }
 
-                success = band_processor.calculate_false_color_composite(
-                    result_paths["nir"],
-                    result_paths["red"],
-                    result_paths["green"],
-                    fc_output_path,
-                )
+            # Update UI to show processing state
+            if item_widget := self._get_item_widget(asset.stac_id):
+                item_widget.update_ui_based_on_local_files()
 
-                # Clear processing message
-                self.iface.messageBar().clearWidgets()
-
-                if success:
-                    self._load_false_color_layer(asset, fc_output_path)
-                else:
-                    self.iface.messageBar().pushMessage(
-                        "Error",
-                        "Failed to create False Color composite",
-                        level=Qgis.Critical,
-                        duration=5,
-                    )
-            else:
-                self.iface.messageBar().clearWidgets()
-                missing_bands = [
-                    band for band in ["nir", "red", "green"] if band not in result_paths
-                ]
-                self.iface.messageBar().pushMessage(
-                    "Error",
-                    f"Failed to process bands: {', '.join(missing_bands)}",
-                    level=Qgis.Critical,
-                    duration=5,
-                )
+            # Add task to QGIS task manager
+            QgsApplication.taskManager().addTask(task)
 
         except Exception as e:
-            self.iface.messageBar().clearWidgets()
             QgsMessageLog.logMessage(
-                f"Error processing False Color with AOI: {str(e)}",
+                f"Error starting False Color AOI processing: {str(e)}",
                 "IDPMPlugin",
                 Qgis.Critical,
             )
@@ -1820,7 +2069,11 @@ class ImageListDialog(BaseDialog):
     def _handle_custom_calculation_with_aoi(
         self, asset, formula: str, output_name: str, coefficients: dict
     ):
-        """Handle custom calculation using AOI-cropped bands with improved performance."""
+        """
+        Handle custom calculation using AOI-cropped bands with background processing.
+
+        Always downloads fresh from URLs - no cache checking.
+        """
         try:
             import re
 
@@ -1858,99 +2111,63 @@ class ImageListDialog(BaseDialog):
                 )
                 return
 
-            canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
             cache_dir = self._get_cache_directory(asset.stac_id)
+            canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
 
-            # Check if custom calculation already exists in cache
-            output_path = os.path.join(
-                cache_dir, f"{asset.stac_id}_{output_name}_aoi.tif"
-            )
-            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                QgsMessageLog.logMessage(
-                    f"Using existing {output_name} cache: {os.path.basename(output_path)}",
-                    "IDPMPlugin",
-                    Qgis.Info,
-                )
-                self._load_custom_calculation_layer(
-                    asset, output_path, output_name, formula
-                )
-                return
-
-            # Initialize band processor
-            band_processor = CogBandProcessor(cache_dir)
-
-            # Get local band paths if available
-            local_band_paths = self._get_local_band_paths(asset)
-
-            # Show processing status in message bar (non-blocking)
-            aoi_area = self.aoi.width() * self.aoi.height()
-            self.iface.messageBar().pushMessage(
-                "Processing",
-                f"Processing {output_name} for AOI ({aoi_area:.4f}°²)...",
-                level=Qgis.Info,
-                duration=0,
+            # Create background task - always download fresh
+            task = AoiCustomCalculationTask(
+                asset.stac_id,
+                band_urls,
+                formula,
+                output_name,
+                coefficients,
+                self.aoi,
+                canvas_crs,
+                cache_dir,
             )
 
-            QgsMessageLog.logMessage(
-                f"Starting {output_name} calculation for AOI. Local files available: {list(local_band_paths.keys())}",
-                "IDPMPlugin",
-                Qgis.Info,
+            # Show progress dialog
+            progress = QProgressDialog(
+                f"Processing {output_name} AOI for {asset.stac_id}...",
+                "Cancel",
+                0,
+                100,
+                self,
             )
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(500)
 
-            # Process bands (will use local files when available)
-            result_paths = band_processor.process_bands_with_aoi(
-                band_urls, self.aoi, canvas_crs, asset.stac_id, local_band_paths
-            )
+            # Connect signals
+            task.progressChanged.connect(lambda value: progress.setValue(int(value)))
+            task.calculationProcessed.connect(self._on_aoi_custom_calculation_processed)
+            task.errorOccurred.connect(self._on_aoi_processing_error)
+            progress.canceled.connect(task.cancel)
 
-            # Check if all required bands were successfully processed
-            failed_bands = [band for band in required_bands if band not in result_paths]
-            if failed_bands:
-                self.iface.messageBar().clearWidgets()
-                self.iface.messageBar().pushMessage(
-                    "Error",
-                    f"Failed to process bands: {', '.join(failed_bands)}",
-                    level=Qgis.Critical,
-                    duration=5,
-                )
-                return
+            # Track active operation
+            op_key = f"{asset.stac_id}_{output_name}_aoi"
+            self.active_operations[op_key] = {
+                "type": "custom_aoi",
+                "task": task,
+                "progress": progress,
+                "asset": asset,
+                "output_name": output_name,
+                "formula": formula,
+            }
 
-            # Calculate custom index
-            QgsMessageLog.logMessage(
-                f"Calculating {output_name} from processed bands...",
-                "IDPMPlugin",
-                Qgis.Info,
-            )
+            # Update UI to show processing state
+            if item_widget := self._get_item_widget(asset.stac_id):
+                item_widget.update_ui_based_on_local_files()
 
-            # Apply coefficients if provided
-            effective_coefficients = coefficients if coefficients else {}
-
-            success = band_processor.calculate_custom_index(
-                result_paths, formula, output_path, effective_coefficients
-            )
-
-            # Clear processing message
-            self.iface.messageBar().clearWidgets()
-
-            if success and os.path.exists(output_path):
-                self._load_custom_calculation_layer(
-                    asset, output_path, output_name, formula
-                )
-            else:
-                self.iface.messageBar().pushMessage(
-                    "Error",
-                    f"Failed to calculate {output_name}",
-                    level=Qgis.Critical,
-                    duration=5,
-                )
+            # Add task to QGIS task manager
+            QgsApplication.taskManager().addTask(task)
 
         except Exception as e:
-            self.iface.messageBar().clearWidgets()
             QgsMessageLog.logMessage(
-                f"Error processing custom calculation with AOI: {str(e)}",
+                f"Error starting custom calculation AOI processing: {str(e)}",
                 "IDPMPlugin",
                 Qgis.Critical,
             )
-            # Fallback to original method if AOI processing fails
+            # Fallback to original method
             self._handle_custom_calculation_original(
                 asset, formula, output_name, coefficients
             )
@@ -1958,12 +2175,26 @@ class ImageListDialog(BaseDialog):
     def _load_custom_calculation_layer(
         self, asset, file_path: str, output_name: str, formula: str
     ):
-        """Load custom calculation layer into QGIS."""
+        """Load custom calculation layer with enhanced styling for NDVI-like indices."""
         try:
             layer_name = f"{asset.stac_id}_{output_name}_AOI"
             layer = QgsRasterLayer(file_path, layer_name)
 
             if layer.isValid():
+                # Apply NDVI-style coloring for vegetation indices
+                vegetation_indices = ["ndvi", "gndvi", "ndwi", "savi", "evi"]
+                is_vegetation_index = any(
+                    idx in output_name.lower() for idx in vegetation_indices
+                )
+
+                if is_vegetation_index:
+                    QgsMessageLog.logMessage(
+                        f"Applying vegetation index styling to {output_name}",
+                        "IDPMPlugin",
+                        Qgis.Info,
+                    )
+                    self._apply_default_ndvi_styling(layer)
+
                 # Add to project
                 QgsProject.instance().addMapLayer(layer)
 
@@ -1974,10 +2205,12 @@ class ImageListDialog(BaseDialog):
                 file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
                 aoi_area = self.aoi.width() * self.aoi.height()
 
+                styling_info = " with vegetation styling" if is_vegetation_index else ""
+
                 # Success message in message bar (non-blocking)
                 self.iface.messageBar().pushMessage(
                     "Success",
-                    f"{output_name} calculated ({file_size_mb:.1f} MB, {aoi_area:.4f}°²) - {layer_name}",
+                    f"{output_name} calculated{styling_info} ({file_size_mb:.1f} MB, {aoi_area:.4f}°²) - {layer_name}",
                     level=Qgis.Success,
                     duration=8,
                 )
@@ -2001,6 +2234,41 @@ class ImageListDialog(BaseDialog):
                 "IDPMPlugin",
                 Qgis.Critical,
             )
+
+    # Optional: Enhanced styling for different vegetation indices
+    def _get_index_specific_styling(self, index_name: str) -> list:
+        """Get color ramp items specific to different vegetation indices."""
+
+        index_styles = {
+            "ndvi": [
+                (-1.0, QColor(165, 0, 38), "Water/Rock"),
+                (-0.2, QColor(215, 48, 39), "Bare soil"),
+                (0.0, QColor(254, 224, 139), "No vegetation"),
+                (0.2, QColor(217, 239, 139), "Sparse vegetation"),
+                (0.4, QColor(166, 217, 106), "Moderate vegetation"),
+                (0.6, QColor(102, 189, 99), "Dense vegetation"),
+                (1.0, QColor(26, 152, 80), "Very dense vegetation"),
+            ],
+            "ndwi": [
+                (-1.0, QColor(139, 69, 19), "Very dry"),
+                (-0.3, QColor(218, 165, 32), "Dry"),
+                (0.0, QColor(255, 255, 224), "Neutral"),
+                (0.3, QColor(173, 216, 230), "Moist"),
+                (0.6, QColor(100, 149, 237), "Wet"),
+                (1.0, QColor(0, 0, 139), "Water"),
+            ],
+            "savi": [
+                (-1.0, QColor(139, 0, 0), "No vegetation"),
+                (0.0, QColor(255, 255, 0), "Bare soil"),
+                (0.2, QColor(154, 205, 50), "Sparse vegetation"),
+                (0.4, QColor(34, 139, 34), "Moderate vegetation"),
+                (0.6, QColor(0, 100, 0), "Dense vegetation"),
+                (1.0, QColor(0, 50, 0), "Very dense vegetation"),
+            ],
+        }
+
+        # Return NDVI style as default
+        return index_styles.get(index_name.lower(), index_styles["ndvi"])
 
     def _handle_custom_calculation_original(
         self, asset, formula: str, output_name: str, coefficients: dict
@@ -2587,6 +2855,39 @@ class ImageListDialog(BaseDialog):
                     pass
 
         return local_paths
+
+    def _get_cache_manager(self) -> AoiCacheManager:
+        """Get AOI cache manager instance."""
+        settings = QSettings()
+        cache_base = settings.value("IDPMPlugin/cache_dir", tempfile.gettempdir())
+        cache_root = os.path.join(cache_base, "idpm_aoi_cache")
+        return AoiCacheManager(cache_root)
+
+    def _cleanup_old_aoi_cache(
+        self, max_age_hours: int = 24, max_files_per_asset: int = 3
+    ):
+        """Clean up old timestamped AOI cache files."""
+        try:
+            cache_manager = self._get_cache_manager()
+            result = cache_manager.cleanup_old_aoi_files(
+                max_age_hours, max_files_per_asset
+            )
+
+            if result["files_removed"] > 0:
+                self.iface.messageBar().pushMessage(
+                    "Cache Cleanup",
+                    f"Cleaned up {result['files_removed']} old AOI files ({result['space_freed_mb']:.1f} MB freed)",
+                    level=Qgis.Info,
+                    duration=5,
+                )
+
+            return result
+
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                f"Error during cache cleanup: {str(e)}", "IDPMPlugin", Qgis.Warning
+            )
+            return {"files_removed": 0, "space_freed_mb": 0}
 
     def apply_stylesheet(self) -> None:
         qss = """

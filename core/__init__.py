@@ -3,6 +3,12 @@
 from .main import IDPMPlugin
 from .ndvi_worker import NdviTask
 from .asset_model import RasterAsset
+from .aoi_processing_tasks import (
+    AoiVisualProcessingTask,
+    AoiNdviProcessingTask,
+    AoiFalseColorProcessingTask,
+    AoiCustomCalculationTask,
+)
 from .cog_aio_loader import (
     CogAoiLoader,
     CogBandProcessor,
@@ -28,4 +34,8 @@ __all__ = [
     "CogBandProcessor",
     "QgisPluginIntegration",
     "check_rasterio_installation",
+    "AoiVisualProcessingTask",
+    "AoiNdviProcessingTask",
+    "AoiFalseColorProcessingTask",
+    "AoiCustomCalculationTask",
 ]
