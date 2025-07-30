@@ -204,7 +204,7 @@ class LoginWidget(BaseDialog):
         logos_layout.setSpacing(12)
         logos_layout.setAlignment(Qt.AlignLeft)
         logo_paths = [self.logo1_path, self.logo2_path]
-        logo_size = 60
+        logo_size = 72
         for i, path in enumerate(logo_paths):
             label = QLabel()
             if os.path.exists(path):
@@ -229,7 +229,7 @@ class LoginWidget(BaseDialog):
             pixmap = QPixmap(self.logo3_path)
             label.setPixmap(
                 pixmap.scaled(
-                    QSize(146, 104), Qt.KeepAspectRatio, Qt.SmoothTransformation
+                    QSize(149, 72), Qt.KeepAspectRatio, Qt.SmoothTransformation
                 )
             )
         else:
@@ -245,7 +245,9 @@ class LoginWidget(BaseDialog):
         logo4_label.setAlignment(Qt.AlignLeft)
         if os.path.exists(self.logo4_path):
             pixmap = QPixmap(self.logo4_path)
-            scaled_pixmap = pixmap.scaledToHeight(40, Qt.SmoothTransformation)
+            scaled_pixmap = pixmap.scaled(
+                QSize(209, 72), Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
             logo4_label.setPixmap(scaled_pixmap)
         else:
             logo4_label.setText("Logo 4")

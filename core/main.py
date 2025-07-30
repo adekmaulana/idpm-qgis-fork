@@ -3,7 +3,7 @@ import os
 from PyQt5.QtCore import QUrl, QSettings, QTimer
 from PyQt5.QtNetwork import QNetworkRequest, QNetworkAccessManager
 from PyQt5.QtWidgets import QAction, QMessageBox, QDialog
-from PyQt5.QtGui import QFontDatabase
+from PyQt5.QtGui import QFontDatabase, QIcon
 from qgis.core import Qgis, QgsMessageLog
 from qgis.gui import QgisInterface
 
@@ -73,6 +73,15 @@ class IDPMPlugin:
 
     def initGui(self) -> None:
         self.action = QAction("IDPM", self.iface.mainWindow())
+
+        # Set the icon
+        icon_path = os.path.join(Config.ASSETS_PATH, "images", "idpm_logo.png")
+        if os.path.exists(icon_path):
+            self.action.setIcon(QIcon(icon_path))
+
+        # Set tooltip
+        self.action.setToolTip("IDPM - Integrated Data Platform Management")
+
         self.action.triggered.connect(self.run)
         self.iface.addToolBarIcon(self.action)
 
