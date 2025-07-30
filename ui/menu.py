@@ -143,6 +143,8 @@ class MenuWidget(BaseDialog):
         self.previous_map_tool = None
         self.selected_aoi: Optional[QgsRectangle] = None
 
+        self._pending_aoi_for_raster_list = None
+
         self.init_menu_ui()
         self._load_and_apply_profile()
 
@@ -281,18 +283,6 @@ class MenuWidget(BaseDialog):
         self.iface.mapCanvas().setMapTool(self.aoi_tool)
         self.iface.mapCanvas().setFocus()
 
-    def _on_aoi_selected_for_search(self, aoi_rect: QgsRectangle):
-        self.selected_aoi = aoi_rect
-        self._restore_map_tool_and_show()
-        self.aoi_status_label.setText("Area of Interest has been set.")
-        self.clear_aoi_button.setVisible(True)
-        ThemedMessageBox.show_message(
-            self,
-            QMessageBox.Information,
-            "AOI Set",
-            "The search area has been defined. Now click 'List Raster' to find intersecting images.",
-        )
-
     def _on_aoi_cancelled(self):
         self._restore_map_tool_and_show()
         self.iface.messageBar().pushMessage(
@@ -306,11 +296,6 @@ class MenuWidget(BaseDialog):
         self.show()
         self.raise_()
         self.activateWindow()
-
-    def _clear_aoi(self):
-        self.selected_aoi = None
-        self.aoi_status_label.setText("No Area of Interest (AOI) selected.")
-        self.clear_aoi_button.setVisible(False)
 
     def _get_selected_wilker(self) -> Optional[str]:
         if not self.user_profile:
@@ -351,6 +336,10 @@ class MenuWidget(BaseDialog):
             return None
 
     def open_image_list(self):
+        """
+        Modified to store AOI information for passing to the raster dialog.
+        This replaces your existing open_image_list method.
+        """
         selected_wilker = self._get_selected_wilker()
         if not selected_wilker:
             return
@@ -366,68 +355,307 @@ class MenuWidget(BaseDialog):
             )
             return
 
+        # Show loading dialog
         if self.loading_dialog is None:
             self.loading_dialog = LoadingDialog(self)
         self.setEnabled(False)
         self.loading_dialog.show()
         self.hide()
 
-        # Different API URL use FRONT_END_URL for catalog requests add /api
+        # Store current AOI selection to pass to raster dialog
+        # This is the key addition - we store the AOI for later use
+        self._pending_aoi_for_raster_list = self.selected_aoi
+
+        # Log AOI status for debugging
+        if self.selected_aoi and not self.selected_aoi.isEmpty():
+            aoi_area = self.selected_aoi.width() * self.selected_aoi.height()
+            QgsMessageLog.logMessage(
+                f"Opening raster list with AOI: {aoi_area:.4f} square degrees",
+                "IDPMPlugin",
+                Qgis.Info,
+            )
+        else:
+            QgsMessageLog.logMessage(
+                "Opening raster list without AOI selection", "IDPMPlugin", Qgis.Info
+            )
+
+        # Make API request (your existing logic)
         request_url = (
             f"{Config.FRONT_END_URL}/api/geoportal/sentinel/catalog/{selected_wilker}"
         )
         request = QNetworkRequest(QUrl(request_url))
         request.setRawHeader(b"Authorization", f"Bearer {token}".encode())
+
+        # Connect to response handler
         self.network_manager.finished.connect(self.handle_catalog_list_response)
         self.network_manager.get(request)
 
     def handle_catalog_list_response(self, reply: QNetworkReply):
+        """
+        Modified to pass AOI information to the ImageListDialog.
+        This replaces your existing handle_catalog_list_response method.
+        """
         from .list_raster import ImageListDialog
 
+        # Re-enable UI and close loading dialog
         self.setEnabled(True)
         if self.loading_dialog:
             self.loading_dialog.close()
 
         try:
+            # Disconnect to prevent multiple calls
             self.network_manager.finished.disconnect(self.handle_catalog_list_response)
         except TypeError:
             pass
 
+        # Handle network errors
         if reply.error():
+            error_message = f"Failed to fetch catalog: {reply.errorString()}"
+            QgsMessageLog.logMessage(error_message, "IDPMPlugin", Qgis.Critical)
+
             ThemedMessageBox.show_message(
-                self,
-                QMessageBox.Critical,
-                "Error",
-                f"Failed to fetch image list: {reply.errorString()}",
+                self, QMessageBox.Critical, "Network Error", error_message
             )
-            self.show()
+            reply.deleteLater()
             return
 
-        response_data = reply.readAll().data()
         try:
-            response = json.loads(response_data.decode("utf-8"))
-            features = response.get("data", {}).get("features", [])
+            # Parse response
+            response_data = reply.readAll()
+            reply.deleteLater()
 
-            if self.image_list_dialog is None:
-                self.image_list_dialog = ImageListDialog(
-                    features, self.iface, self.iface.mainWindow(), aoi=self.selected_aoi
+            response_json = json.loads(response_data.data().decode("utf-8"))
+
+            if not response_json.get("statusCode", 500) == 200:
+                error_msg = response_json.get("message", "Unknown error occurred")
+                QgsMessageLog.logMessage(
+                    f"API Error: {error_msg}", "IDPMPlugin", Qgis.Warning
                 )
+
+                ThemedMessageBox.show_message(
+                    self, QMessageBox.Warning, "API Error", error_msg
+                )
+                return
+
+            # Get the catalog data
+            geojson_data = response_json.get("data", {})
+
+            if not geojson_data or not geojson_data.get("features"):
+                QgsMessageLog.logMessage(
+                    "No raster data found for the selected area",
+                    "IDPMPlugin",
+                    Qgis.Info,
+                )
+
+                ThemedMessageBox.show_message(
+                    self,
+                    QMessageBox.Information,
+                    "No Data",
+                    "No satellite imagery found for the selected working area and time period.",
+                )
+                return
+
+            # Extract features for your existing constructor
+            features = geojson_data.get("features", [])
+
+            # WORK WITH YOUR EXISTING IMPLEMENTATION:
+            # ImageListDialog(features, iface, parent, aoi=selected_aoi)
+
+            # Use your existing singleton pattern
+            if self.image_list_dialog is None:
+                QgsMessageLog.logMessage(
+                    f"Creating new ImageListDialog with {len(features)} features and AOI: {self.selected_aoi is not None}",
+                    "IDPMPlugin",
+                    Qgis.Info,
+                )
+
+                # Use your EXISTING constructor signature
+                self.image_list_dialog = ImageListDialog(
+                    features,  # Your geojson features
+                    self.iface,  # QGIS interface
+                    self.iface.mainWindow(),  # Parent window
+                    aoi=self.selected_aoi,  # AOI (already built into your dialog!)
+                )
+
+                # Your existing event connections
                 self.image_list_dialog.finished.connect(self._on_image_list_closed)
                 self.image_list_dialog.show()
+
+                QgsMessageLog.logMessage(
+                    "ImageListDialog created and shown", "IDPMPlugin", Qgis.Info
+                )
+
             else:
+                # Your existing reuse logic
+                QgsMessageLog.logMessage(
+                    "Reusing existing ImageListDialog", "IDPMPlugin", Qgis.Info
+                )
+
+                # Update the dialog with new features and AOI
+                if hasattr(self.image_list_dialog, "update_features"):
+                    self.image_list_dialog.update_features(
+                        features, aoi=self.selected_aoi
+                    )
+                elif hasattr(self.image_list_dialog, "populate_list"):
+                    self.image_list_dialog.populate_list(geojson_data)
+
+                # Your existing window management
                 self.image_list_dialog.raise_()
                 self.image_list_dialog.activateWindow()
 
-        except (json.JSONDecodeError, Exception) as e:
+            # Log success
+            feature_count = len(features)
+            aoi_status = "with AOI" if self.selected_aoi else "without AOI"
+            QgsMessageLog.logMessage(
+                f"Successfully loaded raster catalog with {feature_count} images {aoi_status}",
+                "IDPMPlugin",
+                Qgis.Info,
+            )
+
+        except json.JSONDecodeError as e:
+            error_msg = f"Failed to parse server response: {str(e)}"
+            QgsMessageLog.logMessage(error_msg, "IDPMPlugin", Qgis.Critical)
+
+            ThemedMessageBox.show_message(
+                self,
+                QMessageBox.Critical,
+                "Parse Error",
+                "Invalid response from server. Please try again.",
+            )
+
+        except Exception as e:
+            error_msg = f"Unexpected error processing catalog response: {str(e)}"
+            QgsMessageLog.logMessage(error_msg, "IDPMPlugin", Qgis.Critical)
+
             ThemedMessageBox.show_message(
                 self,
                 QMessageBox.Critical,
                 "Error",
-                f"An unexpected error occurred: {e}",
+                f"An unexpected error occurred: {str(e)}",
             )
-            self.show()
-        finally:
-            reply.deleteLater()
+
+    def _clear_aoi(self):
+        """
+        Enhanced AOI clearing method.
+        This replaces or enhances your existing _clear_aoi method.
+        """
+        # Clear current AOI
+        self.selected_aoi = None
+
+        # Clear any pending AOI for raster list
+        self._pending_aoi_for_raster_list = None
+
+        # Update UI
+        self.aoi_status_label.setText("No Area of Interest (AOI) selected.")
+        self.clear_aoi_button.setVisible(False)
+
+        # Log the action
+        QgsMessageLog.logMessage("AOI selection cleared", "IDPMPlugin", Qgis.Info)
+
+        # Optional: Show user feedback
+        self.iface.messageBar().pushMessage(
+            "Info", "Area of Interest cleared.", level=Qgis.Info, duration=3
+        )
+
+    def _on_aoi_selected_for_search(self, aoi_rect: QgsRectangle):
+        """
+        Enhanced AOI selection handler.
+        This replaces or enhances your existing _on_aoi_selected_for_search method.
+        """
+        # Store the AOI
+        self.selected_aoi = aoi_rect
+
+        # Restore map tool and show dialog
+        self._restore_map_tool_and_show()
+
+        # Calculate AOI area for display
+        aoi_area_deg = aoi_rect.width() * aoi_rect.height()
+        aoi_area_km2 = (
+            aoi_area_deg * 111.32 * 111.32
+        )  # Rough conversion to km² at equator
+
+        # Update UI
+        self.aoi_status_label.setText(
+            f"AOI selected (~{aoi_area_km2:.1f} km², {aoi_area_deg:.4f}°²)"
+        )
+        self.clear_aoi_button.setVisible(True)
+
+        # Log the selection
+        QgsMessageLog.logMessage(
+            f"AOI selected: {aoi_area_km2:.1f} km² "
+            f"({aoi_rect.xMinimum():.4f}, {aoi_rect.yMinimum():.4f}) to "
+            f"({aoi_rect.xMaximum():.4f}, {aoi_rect.yMaximum():.4f})",
+            "IDPMPlugin",
+            Qgis.Info,
+        )
+
+        # Show user feedback
+        ThemedMessageBox.show_message(
+            self,
+            QMessageBox.Information,
+            "AOI Set",
+            f"Area of Interest defined ({aoi_area_km2:.1f} km²).\n\n"
+            "Now click 'Citra Satelit' to find intersecting satellite images.\n"
+            "AOI processing will automatically optimize downloads and processing.",
+        )
+
+    def _validate_aoi_for_processing(self, aoi_rect: QgsRectangle) -> bool:
+        """
+        New method: Validate AOI before processing to prevent issues.
+        """
+        if not aoi_rect or aoi_rect.isEmpty():
+            return False
+
+        # Check AOI size limits
+        aoi_area = aoi_rect.width() * aoi_rect.height()
+        max_area = 2.0  # Maximum 2 square degrees
+
+        if aoi_area > max_area:
+            QgsMessageLog.logMessage(
+                f"AOI too large: {aoi_area:.4f} square degrees (max: {max_area})",
+                "IDPMPlugin",
+                Qgis.Warning,
+            )
+
+            reply = QMessageBox.question(
+                self,
+                "Large AOI Warning",
+                f"The selected AOI is quite large ({aoi_area:.2f} square degrees).\n\n"
+                f"This may result in:\n"
+                f"• Slow downloads\n"
+                f"• Large file sizes\n"
+                f"• Long processing times\n\n"
+                f"Recommended maximum: {max_area} square degrees.\n\n"
+                f"Do you want to continue anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+
+            return reply == QMessageBox.Yes
+
+        return True
+
+    def _get_aoi_info_for_display(self) -> dict:
+        """
+        New method: Get AOI information for display purposes.
+        """
+        if not self.selected_aoi or self.selected_aoi.isEmpty():
+            return {"has_aoi": False, "area_km2": 0, "area_deg2": 0, "bounds": None}
+
+        aoi_area_deg = self.selected_aoi.width() * self.selected_aoi.height()
+        aoi_area_km2 = aoi_area_deg * 111.32 * 111.32  # Rough conversion
+
+        return {
+            "has_aoi": True,
+            "area_km2": aoi_area_km2,
+            "area_deg2": aoi_area_deg,
+            "bounds": {
+                "xmin": self.selected_aoi.xMinimum(),
+                "ymin": self.selected_aoi.yMinimum(),
+                "xmax": self.selected_aoi.xMaximum(),
+                "ymax": self.selected_aoi.yMaximum(),
+            },
+        }
 
     def _on_image_list_closed(self):
         self.show()

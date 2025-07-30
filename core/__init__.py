@@ -3,6 +3,12 @@
 from .main import IDPMPlugin
 from .ndvi_worker import NdviTask
 from .asset_model import RasterAsset
+from .cog_aio_loader import (
+    CogAoiLoader,
+    CogBandProcessor,
+    QgisPluginIntegration,
+    check_rasterio_installation,
+)
 from .false_color_worker import FalseColorTask
 from .raster_calculator_worker import RasterCalculatorTask
 from .zonal_stats_worker import ZonalStatsTask  # NEW: Import the new task
@@ -18,4 +24,8 @@ __all__ = [
     "RasterAsset",
     "RasterCalculatorTask",
     "ZonalStatsTask",  # NEW: Export the new task
+    "CogAoiLoader",
+    "CogBandProcessor",
+    "QgisPluginIntegration",
+    "check_rasterio_installation",
 ]
