@@ -1,5 +1,3 @@
-# idpm-qgis/core/__init__.py
-
 from .main import IDPMPlugin
 from .ndvi_worker import NdviTask
 from .asset_model import RasterAsset
@@ -17,11 +15,13 @@ from .cog_aio_loader import (
 )
 from .false_color_worker import FalseColorTask
 from .raster_calculator_worker import RasterCalculatorTask
-from .zonal_stats_worker import ZonalStatsTask  # NEW: Import the new task
+from .zonal_stats_worker import ZonalStatsTask
+from .mangrove_classifier import MangroveClassificationTask  # NEW: Import mangrove task
 from .util import (
     get_or_create_plugin_layer_group,
     add_basemap_global_osm,
 )
+
 
 __all__ = [
     "IDPMPlugin",
@@ -29,11 +29,12 @@ __all__ = [
     "FalseColorTask",
     "RasterAsset",
     "RasterCalculatorTask",
-    "ZonalStatsTask",  # NEW: Export the new task
-    "CogAoiLoader",
-    "CogBandProcessor",
-    "QgisPluginIntegration",
-    "check_rasterio_installation",
+    "ZonalStatsTask",
+    "MangroveClassificationTask",  # NEW: Export mangrove task
+    "CogAoiLoader",  # Add placeholder to prevent import errors
+    "CogBandProcessor",  # Add placeholder to prevent import errors
+    "QgisPluginIntegration",  # Add placeholder to prevent import errors
+    "check_rasterio_installation",  # Add placeholder to prevent import errors
     "AoiVisualProcessingTask",
     "AoiNdviProcessingTask",
     "AoiFalseColorProcessingTask",

@@ -41,6 +41,7 @@ from .profile import ProfileDialog
 from .loading import LoadingDialog
 from .custom_input_dialog import CustomInputDialog
 from .themed_message_box import ThemedMessageBox
+from .mangrove_classification import MangroveClassificationDialog
 from ..core.util import add_basemap_global_osm
 from ..core.layer_loader_worker import LayerLoaderTask
 
@@ -135,6 +136,7 @@ class MenuWidget(BaseDialog):
         self.image_list_dialog = None
         self.profile_dialog = None
         self.loading_dialog = None
+        self.mangrove_dialog = None  # NEW: Add mangrove dialog reference
         self.user_profile = {}
         self.main_bg_path = os.path.join(Config.ASSETS_PATH, "images", "menu_bg.jpg")
         self.active_loader_task = None
@@ -211,15 +213,33 @@ class MenuWidget(BaseDialog):
         content_layout.addWidget(self.title_label)
         content_layout.addWidget(subtitle_label)
         content_layout.addWidget(description_label)
+
+        # NEW: Modified button container with 3:2 layout
         button_container = QWidget()
-        button_layout = QHBoxLayout(button_container)
-        button_layout.setSpacing(20)
-        button_layout.setContentsMargins(0, 30, 0, 0)
+        button_main_layout = QVBoxLayout(button_container)
+        button_main_layout.setContentsMargins(0, 30, 0, 0)
+        button_main_layout.setSpacing(20)
+
+        # Top row with 3 cards
+        top_row_layout = QHBoxLayout()
+        top_row_layout.setSpacing(20)
+        top_row_layout.setAlignment(Qt.AlignCenter)
+
+        # Bottom row with 2 cards
+        bottom_row_layout = QHBoxLayout()
+        bottom_row_layout.setSpacing(20)
+        bottom_row_layout.setAlignment(Qt.AlignCenter)
+
+        # Define icon paths
         icon_path_raster = os.path.join(Config.ASSETS_PATH, "images", "image.svg")
         icon_path_potensi = os.path.join(Config.ASSETS_PATH, "images", "maps.svg")
         icon_path_existing = os.path.join(Config.ASSETS_PATH, "images", "world.svg")
         icon_path_aoi = os.path.join(Config.ASSETS_PATH, "images", "focus.svg")
+        icon_path_mangrove = os.path.join(
+            Config.ASSETS_PATH, "images", "tree.svg"
+        )  # NEW: Mangrove icon
 
+        # Create action cards
         self.card_list_raster = ActionCard(
             icon_path_raster, "Citra Satelit", "View Detail"
         )
@@ -232,16 +252,31 @@ class MenuWidget(BaseDialog):
         self.card_select_aoi = ActionCard(
             icon_path_aoi, "Select AOI for Search", "Define Area"
         )
+        # NEW: Mangrove classification card
+        self.card_mangrove_classification = ActionCard(
+            icon_path_mangrove, "Mangrove Classification", "ML Analysis"
+        )
 
+        # Connect signals
         self.card_list_raster.clicked.connect(self.open_image_list)
         self.card_open_potensi.clicked.connect(self.open_potensi_data)
         self.card_open_existing.clicked.connect(self.open_existing_data)
         self.card_select_aoi.clicked.connect(self._handle_select_aoi_for_search)
+        self.card_mangrove_classification.clicked.connect(
+            self.open_mangrove_classification
+        )  # NEW
 
-        button_layout.addWidget(self.card_list_raster)
-        button_layout.addWidget(self.card_open_potensi)
-        button_layout.addWidget(self.card_open_existing)
-        button_layout.addWidget(self.card_select_aoi)
+        # Add cards to rows (3:2 layout)
+        top_row_layout.addWidget(self.card_list_raster)
+        top_row_layout.addWidget(self.card_open_potensi)
+        top_row_layout.addWidget(self.card_open_existing)
+
+        bottom_row_layout.addWidget(self.card_select_aoi)
+        bottom_row_layout.addWidget(self.card_mangrove_classification)
+
+        button_main_layout.addLayout(top_row_layout)
+        button_main_layout.addLayout(bottom_row_layout)
+
         content_layout.addWidget(button_container)
 
         aoi_status_layout = QHBoxLayout()
@@ -263,6 +298,22 @@ class MenuWidget(BaseDialog):
         main_layout.addLayout(content_layout)
         main_layout.addStretch(2)
         self.apply_stylesheet()
+
+    def open_mangrove_classification(self):
+        """Open the mangrove classification dialog."""
+        if self.mangrove_dialog is None:
+            self.mangrove_dialog = MangroveClassificationDialog(self.iface, self)
+            self.mangrove_dialog.finished.connect(self._on_mangrove_dialog_closed)
+
+        # Hide this dialog and show mangrove dialog
+        saved_pos = self.pos()
+        self.hide()
+        self.mangrove_dialog.show()
+
+    def _on_mangrove_dialog_closed(self):
+        """Handle mangrove dialog closure."""
+        self.show()
+        self.mangrove_dialog = None
 
     def _handle_select_aoi_for_search(self):
         add_basemap_global_osm(self.iface, zoom=False)
