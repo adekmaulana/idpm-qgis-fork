@@ -236,7 +236,7 @@ class MenuWidget(BaseDialog):
         icon_path_existing = os.path.join(Config.ASSETS_PATH, "images", "world.svg")
         icon_path_aoi = os.path.join(Config.ASSETS_PATH, "images", "focus.svg")
         icon_path_mangrove = os.path.join(
-            Config.ASSETS_PATH, "images", "tree.svg"
+            Config.ASSETS_PATH, "images", "focus.svg"
         )  # NEW: Mangrove icon
 
         # Create action cards
@@ -872,19 +872,20 @@ class MenuWidget(BaseDialog):
         super().hideEvent(event)
 
         def do_initial_zoom():
-            if not any(
-                layer.name().endswith(("_Visual", "_NDVI", "_FalseColor", "_Custom"))
-                for layer in QgsProject.instance().mapLayers().values()
-            ):
-                indonesia_bbox = QgsRectangle(95.0, -11.0, 141.0, 6.0)
-                dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")
-                source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
-                transform = QgsCoordinateTransform(
-                    source_crs, dest_crs, QgsProject.instance()
-                )
-                indonesia_bbox_transformed = transform.transform(indonesia_bbox)
-                self.iface.mapCanvas().setExtent(indonesia_bbox_transformed)
-                self.iface.mapCanvas().refresh()
+            # if not any(
+            #     layer.name().endswith(("_Visual", "_NDVI", "_FalseColor", "_Custom"))
+            #     for layer in QgsProject.instance().mapLayers().values()
+            # ):
+            #     indonesia_bbox = QgsRectangle(95.0, -11.0, 141.0, 6.0)
+            #     dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")
+            #     source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
+            #     transform = QgsCoordinateTransform(
+            #         source_crs, dest_crs, QgsProject.instance()
+            #     )
+            #     indonesia_bbox_transformed = transform.transform(indonesia_bbox)
+            #     self.iface.mapCanvas().setExtent(indonesia_bbox_transformed)
+            #     self.iface.mapCanvas().refresh()
+            pass
 
         QTimer.singleShot(0, do_initial_zoom)
 
@@ -954,7 +955,7 @@ class MenuWidget(BaseDialog):
                 border-radius: 14px;
             }}
             #actionCard:hover {{ background-color: rgba(255, 255, 255, 0.6); box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.2); }}
-            #cardTitle {{ font-size: 14px; font-weight: bold; color: #FFFFFF; }}
-            #cardSubtitle {{ color: #D0D0D0; font-size: 11px; color: #FFFFFF; }}
+            #cardTitle {{ font-size: 12; font-weight: bold; color: #FFFFFF; }}
+            #cardSubtitle {{ color: #D0D0D0; font-size: 10px; color: #FFFFFF; }}
         """
         self.setStyleSheet(qss)

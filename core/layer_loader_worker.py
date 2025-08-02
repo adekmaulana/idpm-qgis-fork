@@ -280,10 +280,10 @@ class LayerLoaderTask(QgsTask):
                         prov_index, default_value_definition
                     )
                     widget_setup = QgsEditorWidgetSetup(
-                        "TextEdit", {"isEditable": False, "showClearButton": False}
+                        "TextEdit", {"isEditable": True, "showClearButton": True}
                     )
                     self.layer.setEditorWidgetSetup(prov_index, widget_setup)
-                    form_config.setReadOnly(prov_index, True)
+                    form_config.setReadOnly(prov_index, False)
                 # --- END: PROVINCE AUTO-FILL IMPLEMENTATION ---
 
                 # --- START: KODE_PROV AUTO-FILL IMPLEMENTATION ---
@@ -461,6 +461,12 @@ class LayerLoaderTask(QgsTask):
             QgsProject.instance().addMapLayer(self.layer, False)
             if plugin_group:
                 plugin_group.insertLayer(0, self.layer)
+
+            self.layer.afterCommitChanges.connect(
+                lambda: check_changes(
+                    self.wilker_name, self.layer, self.layer_type, self.year
+                )
+            )
             self.layerLoaded.emit(self.layer)
         else:
             if self.exception:
