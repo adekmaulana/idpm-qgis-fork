@@ -16,7 +16,9 @@ from .cog_aio_loader import (
 from .false_color_worker import FalseColorTask
 from .raster_calculator_worker import RasterCalculatorTask
 from .zonal_stats_worker import ZonalStatsTask
-from .mangrove_classifier import MangroveClassificationTask  # NEW: Import mangrove task
+from .mangrove_classifier import (
+    EnhancedMangroveClassificationTask,
+)
 from .util import (
     get_or_create_plugin_layer_group,
     add_basemap_global_osm,
@@ -30,7 +32,7 @@ __all__ = [
     "RasterAsset",
     "RasterCalculatorTask",
     "ZonalStatsTask",
-    "MangroveClassificationTask",  # NEW: Export mangrove task
+    "EnhancedMangroveClassificationTask",  # NEW: Export mangrove task
     "CogAoiLoader",  # Add placeholder to prevent import errors
     "CogBandProcessor",  # Add placeholder to prevent import errors
     "QgisPluginIntegration",  # Add placeholder to prevent import errors
